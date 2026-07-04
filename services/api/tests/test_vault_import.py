@@ -24,3 +24,7 @@ def test_import_file_auto_extracts_text_fields() -> None:
     assert payload["source"] == "orb-notes.md"
     assert "Wait for volume confirmation" in payload["body"]
     assert "orb" in payload["tags"]
+    assert "orb" in payload["ai_tags"]
+    assert "opening-range-breakout" in payload["ai_tags"]
+    assert payload["strategy_info"]["setup"] == "Opening range breakout"
+    assert "Volume" in payload["strategy_info"]["indicators"]

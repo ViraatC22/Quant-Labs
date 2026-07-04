@@ -29,7 +29,22 @@ type VaultItem = {
   source: string;
   body: string;
   tags: string[];
+  aiTags?: string[];
+  strategyInfo?: GeneratedStrategyInfo | null;
   createdAt: string;
+};
+
+type GeneratedStrategyInfo = {
+  name?: string | null;
+  summary?: string | null;
+  setup?: string | null;
+  entry_rules?: string[];
+  exit_rules?: string[];
+  risk_rules?: string[];
+  timeframe?: string | null;
+  indicators?: string[];
+  market?: string | null;
+  confidence?: number;
 };
 
 type ImportedVaultItem = {
@@ -38,6 +53,8 @@ type ImportedVaultItem = {
   source: string;
   body: string;
   tags: string[];
+  ai_tags?: string[];
+  strategy_info?: GeneratedStrategyInfo | null;
   metadata?: Record<string, unknown>;
 };
 
@@ -159,6 +176,85 @@ const emptyState: WorkspaceState = {
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const textLikeExtensions = [".txt", ".md", ".markdown", ".csv", ".json", ".log", ".pine", ".py"];
+const semanticTagRules = [
+  ["opening range", "orb"],
+  ["opening range breakout", "orb"],
+  ["mean reversion", "mean-reversion"],
+  ["trend following", "trend-following"],
+  ["vwap pullback", "vwap-pullback"],
+  ["stop loss", "stop-loss"],
+  ["take profit", "take-profit"],
+  ["risk reward", "risk-reward"],
+  ["position size", "position-sizing"]
+] as const;
+const singleWordTags = [
+  "atr",
+  "backtest",
+  "breakdown",
+  "breakout",
+  "crypto",
+  "ema",
+  "entry",
+  "exit",
+  "fomc",
+  "futures",
+  "journal",
+  "liquidity",
+  "macd",
+  "momentum",
+  "options",
+  "orb",
+  "pullback",
+  "resistance",
+  "reversal",
+  "risk",
+  "rsi",
+  "scalp",
+  "setup",
+  "sma",
+  "stop",
+  "strategy",
+  "support",
+  "swing",
+  "target",
+  "trade",
+  "trend",
+  "volume",
+  "vwap"
+];
+const setupRules = [
+  ["opening range breakout", "Opening range breakout"],
+  ["opening range", "Opening range breakout"],
+  ["orb", "Opening range breakout"],
+  ["vwap pullback", "VWAP pullback"],
+  ["pullback", "Pullback continuation"],
+  ["mean reversion", "Mean reversion"],
+  ["trend following", "Trend following"],
+  ["breakout", "Breakout continuation"],
+  ["breakdown", "Breakdown continuation"],
+  ["reversal", "Reversal"]
+] as const;
+const indicatorRules = [
+  ["vwap", "VWAP"],
+  ["ema", "EMA"],
+  ["sma", "SMA"],
+  ["rsi", "RSI"],
+  ["macd", "MACD"],
+  ["atr", "ATR"],
+  ["volume", "Volume"]
+] as const;
+const marketRules = [
+  ["futures", "futures"],
+  ["options", "options"],
+  ["crypto", "crypto"],
+  ["forex", "forex"],
+  ["equity", "equities"],
+  ["stock", "equities"],
+  ["spy", "equities"],
+  ["qqq", "equities"],
+  ["es", "futures"],
+  ["nq", "futures"]
+] as const;
 
 function newId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -169,6 +265,16 @@ function splitTags(value: string) {
     .split(",")
     .map((tag) => tag.trim())
     .filter(Boolean);
+}
+
+function uniqueTags(values: Array<string | undefined | null>) {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => value?.trim())
+        .filter((value): value is string => Boolean(value))
+    )
+  );
 }
 
 function formatCurrency(value: number) {
@@ -216,14 +322,140 @@ function tagChip(tag: string) {
 }
 
 function vaultItemFromImport(item: ImportedVaultItem): VaultItem {
+  const aiTags = uniqueTags(item.ai_tags ?? []);
+  const strategyInfo = item.strategy_info ?? null;
+
   return {
     id: newId(),
     title: item.title || "Untitled source",
     kind: item.kind || "note",
     source: item.source || "local upload",
     body: item.body || "Imported source",
-    tags: Array.from(new Set(item.tags ?? [])),
+    tags: uniqueTags([...(item.tags ?? []), ...aiTags]),
+    aiTags,
+    strategyInfo,
     createdAt: new Date().toISOString()
+  };
+}
+
+function textContainsWord(text: string, word: string) {
+  return new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(text);
+}
+
+function sourceSentences(text: string) {
+  return text
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?])\s+|\n+|(?:^|\s)[-*]\s+/)
+    .map((sentence) => sentence.trim().replace(/^-+/, "").trim())
+    .filter((sentence) => sentence.length >= 8);
+}
+
+function matchingRules(sentences: string[], needles: string[], limit = 3) {
+  const rules: string[] = [];
+  sentences.forEach((sentence) => {
+    const lowered = sentence.toLowerCase();
+    if (rules.length < limit && needles.some((needle) => lowered.includes(needle))) {
+      rules.push(sentence.slice(0, 220));
+    }
+  });
+  return rules;
+}
+
+function firstMatchingRule(
+  text: string,
+  rules: readonly (readonly [string, string])[]
+) {
+  const lowered = text.toLowerCase();
+  return rules.find(([needle]) => lowered.includes(needle))?.[1] ?? null;
+}
+
+function generatedTagsForImport(item: ImportedVaultItem) {
+  const text = `${item.title} ${item.source} ${item.body.slice(0, 6000)}`.toLowerCase();
+  const tags = [
+    ...singleWordTags.filter((tag) => textContainsWord(text, tag)),
+    ...semanticTagRules.filter(([needle]) => text.includes(needle)).map(([, tag]) => tag)
+  ];
+  const setup = firstMatchingRule(text, setupRules);
+  const market = firstMatchingRule(text, marketRules);
+  if (setup) tags.push(setup.toLowerCase().replaceAll(" ", "-"));
+  if (market) tags.push(market);
+  indicatorRules.forEach(([needle, label]) => {
+    if (textContainsWord(text, needle)) tags.push(label.toLowerCase());
+  });
+  if (item.kind === "strategy" || item.kind === "broker_import") tags.push(item.kind);
+  if (/\b(?:1|2|3|5|10|15|30|60)[ -]?(?:m|min|minute|minutes)\b/i.test(text)) tags.push("timeframe");
+  return uniqueTags(tags).sort();
+}
+
+function strategyInfoForImport(item: ImportedVaultItem, aiTags: string[]): GeneratedStrategyInfo | null {
+  const text = `${item.title}\n${item.body.slice(0, 9000)}`;
+  const lowered = text.toLowerCase();
+  const sentences = sourceSentences(text);
+  const setup = firstMatchingRule(text, setupRules);
+  const indicators = indicatorRules
+    .filter(([needle]) => textContainsWord(lowered, needle))
+    .map(([, label]) => label)
+    .sort();
+  const market = firstMatchingRule(text, marketRules);
+  const timeframe = text.match(/\b(?:1|2|3|5|10|15|30|60)[ -]?(?:m|min|minute|minutes)\b/i)?.[0] ?? null;
+  const entryRules = matchingRules(sentences, [
+    "entry",
+    "enter",
+    "buy",
+    "long",
+    "short",
+    "trigger",
+    "break",
+    "reclaim",
+    "confirmation"
+  ]);
+  const exitRules = matchingRules(sentences, ["exit", "target", "take profit", "profit", "sell", "cover", "trail"]);
+  const riskRules = matchingRules(sentences, ["risk", "stop", "invalidation", "max loss", "position size", "size", "atr"]);
+  const signalCount = [
+    setup,
+    indicators.length,
+    timeframe,
+    market,
+    entryRules.length,
+    exitRules.length,
+    riskRules.length,
+    item.kind === "strategy",
+    aiTags.includes("strategy")
+  ].filter(Boolean).length;
+
+  if (signalCount < 2) return null;
+
+  return {
+    name: item.title,
+    summary:
+      sentences.find((sentence) => sentence.length >= 24)?.slice(0, 260) ??
+      `Generated strategy context for ${item.title}.`,
+    setup,
+    entry_rules: entryRules,
+    exit_rules: exitRules,
+    risk_rules: riskRules,
+    timeframe,
+    indicators,
+    market,
+    confidence: Math.min(0.95, Number((0.25 + signalCount * 0.08).toFixed(2)))
+  };
+}
+
+function enrichImportedItem(item: ImportedVaultItem): ImportedVaultItem {
+  const aiTags = generatedTagsForImport(item);
+  const strategyInfo = strategyInfoForImport(item, aiTags);
+
+  return {
+    ...item,
+    tags: uniqueTags([...(item.tags ?? []), ...aiTags]).sort(),
+    ai_tags: aiTags,
+    strategy_info: strategyInfo,
+    metadata: {
+      ...item.metadata,
+      generated_tags: aiTags,
+      strategy_info: strategyInfo,
+      enrichment_method: "client_semantic_rules"
+    }
   };
 }
 
@@ -239,14 +471,14 @@ function fallbackLinkImport(url: string): ImportedVaultItem {
   const parsed = new URL(url);
   const pathTitle = parsed.pathname.split("/").filter(Boolean).pop()?.replaceAll("-", " ");
   const title = pathTitle || parsed.hostname.replace(/^www\./, "");
-  return {
+  return enrichImportedItem({
     title,
     kind: "article",
     source: url,
     body: `Imported link: ${url}`,
     tags: ["article", hostFromUrl(url)],
     metadata: { import_method: "client_url_fallback" }
-  };
+  });
 }
 
 async function fallbackFileImport(file: File): Promise<ImportedVaultItem> {
@@ -265,7 +497,7 @@ async function fallbackFileImport(file: File): Promise<ImportedVaultItem> {
     ? (await file.text()).slice(0, 24000)
     : `Uploaded ${kind} file: ${file.name} (${Math.max(1, Math.round(file.size / 1024))} KB).`;
 
-  return {
+  return enrichImportedItem({
     title: file.name.replace(/\.[^.]+$/, "").replaceAll("-", " ").replaceAll("_", " "),
     kind,
     source: file.name,
@@ -276,7 +508,7 @@ async function fallbackFileImport(file: File): Promise<ImportedVaultItem> {
       content_type: file.type || "application/octet-stream",
       byte_count: file.size
     }
-  };
+  });
 }
 
 export function WorkspaceApp() {
@@ -349,7 +581,15 @@ export function WorkspaceApp() {
     if (!needle) return state.vault;
 
     return state.vault.filter((item) =>
-      [item.title, item.kind, item.source, item.body, item.tags.join(" ")]
+      [
+        item.title,
+        item.kind,
+        item.source,
+        item.body,
+        item.tags.join(" "),
+        item.aiTags?.join(" ") ?? "",
+        JSON.stringify(item.strategyInfo ?? {})
+      ]
         .join(" ")
         .toLowerCase()
         .includes(needle)
@@ -376,7 +616,9 @@ export function WorkspaceApp() {
     setState((current) => ({ ...current, vault: [vaultItem, ...current.vault] }));
     setImportStatus({
       tone: "success",
-      message: `Imported "${vaultItem.title}" and auto-filled ${vaultItem.tags.length} tags.`
+      message: `Imported "${vaultItem.title}" with ${vaultItem.tags.length} tags${
+        vaultItem.strategyInfo ? " and strategy fields" : ""
+      }.`
     });
   }
 
@@ -642,7 +884,11 @@ export function WorkspaceApp() {
                     </div>
                     <div className="flex items-center justify-between gap-3">
                       <span>Tags</span>
-                      <span className="font-medium text-ink">source + keywords</span>
+                      <span className="font-medium text-ink">generated + source</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span>Strategy</span>
+                      <span className="font-medium text-ink">setup + rules</span>
                     </div>
                   </div>
                 </div>
@@ -665,35 +911,56 @@ export function WorkspaceApp() {
                   </label>
                 </div>
                 <div className="divide-y divide-line">
-                  {filteredVault.map((item) => (
-                    <article key={item.id} className="p-4">
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="text-sm font-semibold text-ink">{item.title}</h3>
-                            <span className="rounded-md bg-signal/10 px-2 py-1 text-xs font-medium text-signal">
-                              {item.kind}
-                            </span>
+                  {filteredVault.map((item) => {
+                    const aiTags = item.aiTags ?? [];
+                    const strategyInfo = item.strategyInfo;
+
+                    return (
+                      <article key={item.id} className="p-4">
+                        <div className="flex items-start justify-between gap-4">
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="text-sm font-semibold text-ink">{item.title}</h3>
+                              <span className="rounded-md bg-signal/10 px-2 py-1 text-xs font-medium text-signal">
+                                {item.kind}
+                              </span>
+                              {aiTags.length > 0 && (
+                                <span className="rounded-md bg-caution/10 px-2 py-1 text-xs font-medium text-caution">
+                                  AI tags
+                                </span>
+                              )}
+                            </div>
+                            <p className="mt-2 text-sm leading-6 text-ink/68">
+                              {item.body.length > 900 ? `${item.body.slice(0, 900)}...` : item.body}
+                            </p>
+                            <div className="mt-3 flex flex-wrap gap-2">
+                              {item.source && tagChip(item.source)}
+                              {item.tags.map(tagChip)}
+                            </div>
+                            {aiTags.length > 0 && (
+                              <div className="mt-4 border-l-2 border-caution/35 pl-3">
+                                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/48">
+                                  Generated Tags
+                                </p>
+                                <div className="mt-2 flex flex-wrap gap-2">{aiTags.map(tagChip)}</div>
+                              </div>
+                            )}
+                            {strategyInfo && (
+                              <StrategyInfoSummary strategyInfo={strategyInfo} />
+                            )}
                           </div>
-                          <p className="mt-2 text-sm leading-6 text-ink/68">
-                            {item.body.length > 900 ? `${item.body.slice(0, 900)}...` : item.body}
-                          </p>
-                          <div className="mt-3 flex flex-wrap gap-2">
-                            {item.source && tagChip(item.source)}
-                            {item.tags.map(tagChip)}
-                          </div>
+                          <button
+                            className="rounded-md p-2 text-ink/45 transition hover:bg-paper hover:text-loss"
+                            onClick={() => removeItem("vault", item.id)}
+                            title="Delete"
+                            type="button"
+                          >
+                            <Trash2 aria-hidden="true" size={17} />
+                          </button>
                         </div>
-                        <button
-                          className="rounded-md p-2 text-ink/45 transition hover:bg-paper hover:text-loss"
-                          onClick={() => removeItem("vault", item.id)}
-                          title="Delete"
-                          type="button"
-                        >
-                          <Trash2 aria-hidden="true" size={17} />
-                        </button>
-                      </div>
-                    </article>
-                  ))}
+                      </article>
+                    );
+                  })}
                   {!filteredVault.length && (
                     <div className="grid min-h-64 place-items-center p-6 text-center text-sm font-medium text-ink/55">
                       Vault is empty
@@ -1179,6 +1446,57 @@ export function WorkspaceApp() {
   );
 }
 
+function StrategyInfoSummary({ strategyInfo }: { strategyInfo: GeneratedStrategyInfo }) {
+  const detailRows = [
+    ["Setup", strategyInfo.setup],
+    ["Timeframe", strategyInfo.timeframe],
+    ["Market", strategyInfo.market],
+    ["Confidence", strategyInfo.confidence !== undefined ? `${Math.round(strategyInfo.confidence * 100)}%` : null]
+  ].filter((row): row is [string, string] => Boolean(row[1]));
+
+  return (
+    <div className="mt-4 border-l-2 border-signal/35 pl-3">
+      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/48">
+        Strategy Info
+      </p>
+      {strategyInfo.summary && (
+        <p className="mt-2 text-sm leading-6 text-ink/68">{strategyInfo.summary}</p>
+      )}
+      {detailRows.length > 0 && (
+        <div className="mt-3 grid gap-2 text-sm md:grid-cols-2">
+          {detailRows.map(([label, value]) => (
+            <div className="flex items-center justify-between gap-3" key={label}>
+              <span className="text-ink/55">{label}</span>
+              <span className="text-right font-medium text-ink">{value}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {strategyInfo.indicators?.length ? (
+        <div className="mt-3 flex flex-wrap gap-2">{strategyInfo.indicators.map(tagChip)}</div>
+      ) : null}
+      <StrategyRuleList label="Entry" values={strategyInfo.entry_rules ?? []} />
+      <StrategyRuleList label="Exit" values={strategyInfo.exit_rules ?? []} />
+      <StrategyRuleList label="Risk" values={strategyInfo.risk_rules ?? []} />
+    </div>
+  );
+}
+
+function StrategyRuleList({ label, values }: { label: string; values: string[] }) {
+  if (!values.length) return null;
+
+  return (
+    <div className="mt-3">
+      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/45">{label}</p>
+      <ul className="mt-1 grid gap-1 text-sm leading-6 text-ink/66">
+        {values.map((value) => (
+          <li key={value}>{value}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 function InsightCard({ insight }: { insight: TradingInsight }) {
   const toneClass: Record<TradingInsight["tone"], string> = {
     good: "border-moss/25 bg-moss/10",
@@ -1279,12 +1597,22 @@ function buildLabelStats(trades: TradeEntry[], labelFor: (trade: TradeEntry) => 
 
 function buildTradingInsights(state: WorkspaceState, strategyStats: StrategyStat[]): TradingInsight[] {
   if (!state.trades.length) {
+    const strategySources = state.vault.filter((item) => item.strategyInfo);
+
     return [
       {
         title: "Strategy Edge",
         value: "Waiting",
         detail: "Log closed trades with strategy, setup, and state labels to calculate edge.",
         tone: "neutral"
+      },
+      {
+        title: "Strategy Research",
+        value: `${strategySources.length} sources`,
+        detail: strategySources.length
+          ? "Generated strategy fields are ready in the vault and map."
+          : "Upload strategy notes or links to generate setup, entry, exit, and risk fields.",
+        tone: strategySources.length ? "good" : "neutral"
       },
       {
         title: "Vault Coverage",
@@ -1307,6 +1635,7 @@ function buildTradingInsights(state: WorkspaceState, strategyStats: StrategyStat
   const routineDates = new Set(state.journal.filter((entry) => entry.routineDone).map((entry) => entry.date));
   const routineTrades = state.trades.filter((trade) => routineDates.has(trade.entryDate));
   const nonRoutineTrades = state.trades.filter((trade) => !routineDates.has(trade.entryDate));
+  const strategySources = state.vault.filter((item) => item.strategyInfo);
   const insights: TradingInsight[] = [
     {
       title: "Net Edge",
@@ -1315,6 +1644,16 @@ function buildTradingInsights(state: WorkspaceState, strategyStats: StrategyStat
       tone: totalPnl > 0 ? "good" : totalPnl < 0 ? "bad" : "neutral"
     }
   ];
+
+  if (strategySources.length) {
+    const generatedTagCount = strategySources.reduce((sum, item) => sum + (item.aiTags?.length ?? 0), 0);
+    insights.push({
+      title: "Strategy Research",
+      value: `${strategySources.length} sources`,
+      detail: `${generatedTagCount} generated tags connected to the map.`,
+      tone: "good"
+    });
+  }
 
   if (bestStrategy) {
     insights.push({
@@ -1504,6 +1843,7 @@ function buildGraphModel(state: WorkspaceState): GraphModel {
 
   state.vault.forEach((item) => {
     const sourceId = `source:${item.id}`;
+    const strategyInfo = item.strategyInfo;
     addGraphNode(nodes, {
       id: sourceId,
       label: item.title,
@@ -1513,19 +1853,50 @@ function buildGraphModel(state: WorkspaceState): GraphModel {
     });
     addGraphEdge(edges, edgeIds, memoryId, sourceId, "source");
 
-    if (item.kind === "strategy" || item.tags.some((tag) => tag.toLowerCase().includes("strategy"))) {
-      const strategyId = graphId("strategy", item.title);
+    if (
+      strategyInfo ||
+      item.kind === "strategy" ||
+      item.tags.some((tag) => tag.toLowerCase().includes("strategy"))
+    ) {
+      const strategyName = strategyInfo?.name || item.title;
+      const strategyId = graphId("strategy", strategyName);
       addGraphNode(nodes, {
         id: strategyId,
-        label: item.title,
+        label: strategyName,
         type: "strategy",
-        detail: "Strategy research captured in the vault.",
+        detail: strategyInfo?.summary || "Strategy research captured in the vault.",
         weight: 1
       });
-      addGraphEdge(edges, edgeIds, sourceId, strategyId, "strategy note");
+      addGraphEdge(edges, edgeIds, sourceId, strategyId, strategyInfo ? "strategy info" : "strategy note");
+
+      if (strategyInfo?.setup) {
+        const setupId = graphId("setup", strategyInfo.setup);
+        addGraphNode(nodes, {
+          id: setupId,
+          label: strategyInfo.setup,
+          type: "setup",
+          detail: "Generated setup from imported strategy information.",
+          weight: 1
+        });
+        addGraphEdge(edges, edgeIds, strategyId, setupId, "setup");
+      }
+
+      [strategyInfo?.market, strategyInfo?.timeframe, ...(strategyInfo?.indicators ?? [])]
+        .filter((tag): tag is string => Boolean(tag))
+        .forEach((tag) => {
+          const tagId = graphId("tag", tag);
+          addGraphNode(nodes, {
+            id: tagId,
+            label: tag,
+            type: "tag",
+            detail: "Generated strategy attribute.",
+            weight: 1
+          });
+          addGraphEdge(edges, edgeIds, strategyId, tagId, "attribute");
+        });
     }
 
-    [item.kind, ...item.tags].filter(Boolean).forEach((tag) => {
+    uniqueTags([item.kind, ...item.tags, ...(item.aiTags ?? [])]).forEach((tag) => {
       const tagId = graphId("tag", tag);
       addGraphNode(nodes, {
         id: tagId,
