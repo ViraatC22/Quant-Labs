@@ -20,7 +20,7 @@ import { type FormEvent, useEffect, useMemo, useState } from "react";
 
 import { MetricTile } from "@/components/MetricTile";
 
-type TabKey = "vault" | "journal" | "trades" | "graph";
+type TabKey = "vault" | "journal" | "trades" | "insights" | "graph";
 
 type VaultItem = {
   id: string;
@@ -74,13 +74,81 @@ type WorkspaceState = {
   trades: TradeEntry[];
 };
 
+type StrategyStat = {
+  name: string;
+  count: number;
+  wins: number;
+  losses: number;
+  winRate: number;
+  totalPnl: number;
+  avgPnl: number;
+  symbols: string[];
+  setups: string[];
+  bestTrade: TradeEntry;
+  worstTrade: TradeEntry;
+};
+
+type LabelStat = {
+  label: string;
+  count: number;
+  wins: number;
+  winRate: number;
+  totalPnl: number;
+  avgPnl: number;
+};
+
+type TradingInsight = {
+  title: string;
+  value: string;
+  detail: string;
+  tone: "good" | "warn" | "bad" | "neutral";
+};
+
+type GraphNodeType =
+  | "memory"
+  | "strategy"
+  | "trade"
+  | "symbol"
+  | "setup"
+  | "emotion"
+  | "source"
+  | "journal"
+  | "tag";
+
+type GraphNode = {
+  id: string;
+  label: string;
+  type: GraphNodeType;
+  detail: string;
+  weight: number;
+  pnl?: number;
+};
+
+type PositionedGraphNode = GraphNode & {
+  x: number;
+  y: number;
+};
+
+type GraphEdge = {
+  id: string;
+  from: string;
+  to: string;
+  label: string;
+};
+
+type GraphModel = {
+  nodes: PositionedGraphNode[];
+  edges: GraphEdge[];
+};
+
 const storageKey = "quant-labs.workspace.v1";
 
 const tabs: Array<{ key: TabKey; label: string; icon: typeof BookMarked }> = [
   { key: "vault", label: "Vault", icon: BookMarked },
   { key: "journal", label: "Journal", icon: CalendarCheck },
   { key: "trades", label: "Trades", icon: LineChart },
-  { key: "graph", label: "Graph", icon: GitBranch }
+  { key: "insights", label: "Insights", icon: BrainCircuit },
+  { key: "graph", label: "Map", icon: GitBranch }
 ];
 
 const emptyState: WorkspaceState = {
@@ -236,6 +304,7 @@ export function WorkspaceApp() {
     tone: "idle" | "loading" | "success" | "error";
     message: string;
   }>({ tone: "idle", message: "Waiting for a link or file." });
+  const [selectedGraphNodeId, setSelectedGraphNodeId] = useState("memory");
 
   useEffect(() => {
     window.localStorage.setItem(storageKey, JSON.stringify(state));
@@ -287,27 +356,20 @@ export function WorkspaceApp() {
     );
   }, [query, state.vault]);
 
-  const graph = useMemo(() => {
-    const strategies = new Set(state.trades.map((trade) => trade.strategy).filter(Boolean));
-    const symbols = new Set(state.trades.map((trade) => trade.symbol).filter(Boolean));
-    const emotions = new Set([
-      ...state.trades.map((trade) => trade.emotion).filter(Boolean),
-      ...state.journal.map((entry) => entry.emotion).filter(Boolean)
-    ]);
-    const tags = new Set([
-      ...state.vault.flatMap((item) => item.tags),
-      ...state.journal.flatMap((entry) => entry.tags)
-    ]);
-
-    return {
-      nodes: state.vault.length + state.journal.length + state.trades.length + strategies.size + symbols.size,
-      edges: state.trades.length * 2 + state.vault.length + state.journal.length + tags.size,
-      strategies,
-      symbols,
-      emotions,
-      tags
-    };
-  }, [state]);
+  const strategyStats = useMemo(() => buildStrategyStats(state.trades), [state.trades]);
+  const tradingInsights = useMemo(
+    () => buildTradingInsights(state, strategyStats),
+    [state, strategyStats]
+  );
+  const graph = useMemo(() => buildGraphModel(state), [state]);
+  const graphNodeLookup = useMemo(
+    () => new Map(graph.nodes.map((node) => [node.id, node])),
+    [graph.nodes]
+  );
+  const selectedGraphNode = graphNodeLookup.get(selectedGraphNodeId) ?? graph.nodes[0];
+  const selectedGraphEdges = selectedGraphNode
+    ? graph.edges.filter((edge) => edge.from === selectedGraphNode.id || edge.to === selectedGraphNode.id)
+    : [];
 
   function saveImportedVaultItem(item: ImportedVaultItem) {
     const vaultItem = vaultItemFromImport(item);
@@ -875,35 +937,207 @@ export function WorkspaceApp() {
             </section>
           )}
 
+          {activeTab === "insights" && (
+            <section className="grid gap-4 xl:grid-cols-[1fr_380px]">
+              <section className="rounded-lg border border-line bg-white/86 p-4 shadow-panel">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <h2 className="text-base font-semibold text-ink">Trading Insights</h2>
+                    <p className="mt-1 text-sm text-ink/58">
+                      {state.trades.length} trades, {strategyStats.length} strategies
+                    </p>
+                  </div>
+                  <BrainCircuit aria-hidden="true" className="text-signal" size={21} strokeWidth={2.1} />
+                </div>
+
+                <div className="mt-5 grid gap-3 md:grid-cols-2">
+                  {tradingInsights.map((insight) => (
+                    <InsightCard insight={insight} key={insight.title} />
+                  ))}
+                </div>
+              </section>
+
+              <section className="overflow-hidden rounded-lg border border-line bg-white/86 shadow-panel">
+                <div className="flex items-center justify-between border-b border-line px-4 py-3">
+                  <div>
+                    <h2 className="text-base font-semibold text-ink">Strategy Scoreboard</h2>
+                    <p className="mt-1 text-sm text-ink/58">ranked by realized P&L</p>
+                  </div>
+                  <ShieldCheck aria-hidden="true" className="text-moss" size={20} strokeWidth={2.1} />
+                </div>
+                <div className="divide-y divide-line">
+                  {strategyStats.map((stat) => (
+                    <article key={stat.name} className="p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <h3 className="text-sm font-semibold text-ink">{stat.name}</h3>
+                          <p className="mt-1 text-xs font-medium text-ink/52">
+                            {stat.count} trades / {stat.winRate}% win rate
+                          </p>
+                        </div>
+                        <span
+                          className={[
+                            "rounded-md px-2 py-1 text-xs font-semibold",
+                            stat.totalPnl >= 0 ? "bg-moss/10 text-moss" : "bg-loss/10 text-loss"
+                          ].join(" ")}
+                        >
+                          {formatCurrency(stat.totalPnl)}
+                        </span>
+                      </div>
+                      <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
+                        <SnapshotRow label="Avg" value={formatCurrency(stat.avgPnl)} />
+                        <SnapshotRow label="Best" value={formatCurrency(tradePnl(stat.bestTrade))} />
+                        <SnapshotRow label="Worst" value={formatCurrency(tradePnl(stat.worstTrade))} />
+                      </div>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        {stat.symbols.slice(0, 4).map(tagChip)}
+                        {stat.setups.slice(0, 3).map(tagChip)}
+                      </div>
+                    </article>
+                  ))}
+                  {!strategyStats.length && (
+                    <div className="grid min-h-64 place-items-center p-6 text-center text-sm font-medium text-ink/55">
+                      No strategy stats yet
+                    </div>
+                  )}
+                </div>
+              </section>
+            </section>
+          )}
+
           {activeTab === "graph" && (
             <section className="grid gap-4 xl:grid-cols-[1fr_360px]">
               <section className="rounded-lg border border-line bg-white/86 p-4 shadow-panel">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-4">
                   <div>
-                    <h2 className="text-base font-semibold text-ink">Strategy Graph</h2>
+                    <h2 className="text-base font-semibold text-ink">Obsidian Map</h2>
                     <p className="mt-1 text-sm text-ink/58">
-                      {graph.nodes} nodes / {graph.edges} edges
+                      {graph.nodes.length} nodes / {graph.edges.length} edges
                     </p>
                   </div>
                   <GitBranch aria-hidden="true" className="text-signal" size={21} strokeWidth={2.1} />
                 </div>
-                <div className="mt-5 grid gap-3 md:grid-cols-2">
-                  <GraphGroup label="Strategies" values={Array.from(graph.strategies)} />
-                  <GraphGroup label="Symbols" values={Array.from(graph.symbols)} />
-                  <GraphGroup label="Emotions" values={Array.from(graph.emotions)} />
-                  <GraphGroup label="Tags" values={Array.from(graph.tags)} />
+
+                <div className="mt-5 overflow-hidden rounded-lg border border-ink/10 bg-[#171a1d]">
+                  <svg
+                    aria-label="Trading relationship map"
+                    className="h-[520px] w-full"
+                    role="img"
+                    viewBox="0 0 920 560"
+                  >
+                    <rect fill="#171a1d" height="560" width="920" x="0" y="0" />
+                    {graph.edges.map((edge) => {
+                      const from = graphNodeLookup.get(edge.from);
+                      const to = graphNodeLookup.get(edge.to);
+                      if (!from || !to) return null;
+
+                      return (
+                        <line
+                          key={edge.id}
+                          opacity={selectedGraphNode && (edge.from === selectedGraphNode.id || edge.to === selectedGraphNode.id) ? 0.72 : 0.22}
+                          stroke="#d8d1c3"
+                          strokeWidth={selectedGraphNode && (edge.from === selectedGraphNode.id || edge.to === selectedGraphNode.id) ? 1.6 : 1}
+                          x1={from.x}
+                          x2={to.x}
+                          y1={from.y}
+                          y2={to.y}
+                        />
+                      );
+                    })}
+                    {graph.nodes.map((node) => {
+                      const style = graphNodeStyle(node.type);
+                      const selected = selectedGraphNode?.id === node.id;
+
+                      return (
+                        <g
+                          className="cursor-pointer outline-none"
+                          key={node.id}
+                          onClick={() => setSelectedGraphNodeId(node.id)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") {
+                              event.preventDefault();
+                              setSelectedGraphNodeId(node.id);
+                            }
+                          }}
+                          role="button"
+                          tabIndex={0}
+                        >
+                          <circle
+                            cx={node.x}
+                            cy={node.y}
+                            fill={style.fill}
+                            r={graphNodeRadius(node)}
+                            stroke={selected ? "#ffffff" : style.stroke}
+                            strokeWidth={selected ? 3 : 1.5}
+                          />
+                          <text
+                            fill="#f7f3ea"
+                            fontSize="11"
+                            fontWeight={600}
+                            opacity={selected ? 1 : 0.78}
+                            textAnchor="middle"
+                            x={node.x}
+                            y={node.y + graphNodeRadius(node) + 16}
+                          >
+                            {shortLabel(node.label, node.type === "trade" ? 12 : 18)}
+                          </text>
+                        </g>
+                      );
+                    })}
+                  </svg>
                 </div>
               </section>
 
               <section className="rounded-lg border border-line bg-white/86 p-4 shadow-panel">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-base font-semibold text-ink">Evidence</h2>
+                  <h2 className="text-base font-semibold text-ink">Node Detail</h2>
                   <ShieldCheck aria-hidden="true" className="text-moss" size={20} strokeWidth={2.1} />
                 </div>
-                <div className="mt-4 space-y-3 text-sm text-ink/68">
-                  <p>{state.trades.length} trades connected to symbols, strategy labels, and states.</p>
-                  <p>{state.vault.length} vault records connected to source tags.</p>
-                  <p>{state.journal.length} journal entries connected to routines and states.</p>
+                {selectedGraphNode && (
+                  <div className="mt-4">
+                    <span className="rounded-md bg-paper px-2 py-1 text-xs font-semibold uppercase text-ink/54">
+                      {selectedGraphNode.type}
+                    </span>
+                    <h3 className="mt-3 text-lg font-semibold text-ink">{selectedGraphNode.label}</h3>
+                    <p className="mt-2 text-sm leading-6 text-ink/64">{selectedGraphNode.detail}</p>
+                    {selectedGraphNode.pnl !== undefined && (
+                      <p
+                        className={[
+                          "mt-3 text-sm font-semibold",
+                          selectedGraphNode.pnl >= 0 ? "text-moss" : "text-loss"
+                        ].join(" ")}
+                      >
+                        {formatCurrency(selectedGraphNode.pnl)}
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                <div className="mt-5 border-t border-line pt-4">
+                  <h3 className="text-sm font-semibold text-ink">Connections</h3>
+                  <div className="mt-3 grid gap-2">
+                    {selectedGraphEdges.slice(0, 12).map((edge) => {
+                      const otherId = edge.from === selectedGraphNode?.id ? edge.to : edge.from;
+                      const other = graphNodeLookup.get(otherId);
+
+                      return (
+                        <button
+                          className="flex min-h-10 items-center justify-between gap-3 rounded-md border border-line bg-white px-3 text-left text-sm transition hover:bg-paper"
+                          key={edge.id}
+                          onClick={() => other && setSelectedGraphNodeId(other.id)}
+                          type="button"
+                        >
+                          <span className="font-medium text-ink">{other?.label ?? "Unknown"}</span>
+                          <span className="text-xs font-medium text-ink/48">{edge.label}</span>
+                        </button>
+                      );
+                    })}
+                    {!selectedGraphEdges.length && (
+                      <div className="rounded-md border border-line bg-paper/60 px-3 py-3 text-sm font-medium text-ink/52">
+                        No connections yet
+                      </div>
+                    )}
+                  </div>
                 </div>
               </section>
             </section>
@@ -945,14 +1179,28 @@ export function WorkspaceApp() {
   );
 }
 
-function GraphGroup({ label, values }: { label: string; values: string[] }) {
+function InsightCard({ insight }: { insight: TradingInsight }) {
+  const toneClass: Record<TradingInsight["tone"], string> = {
+    good: "border-moss/25 bg-moss/10",
+    warn: "border-caution/30 bg-caution/10",
+    bad: "border-loss/25 bg-loss/10",
+    neutral: "border-line bg-paper/58"
+  };
+  const valueClass: Record<TradingInsight["tone"], string> = {
+    good: "text-moss",
+    warn: "text-caution",
+    bad: "text-loss",
+    neutral: "text-ink"
+  };
+
   return (
-    <section className="min-h-36 rounded-lg border border-line bg-paper/55 p-4">
-      <h3 className="text-sm font-semibold text-ink">{label}</h3>
-      <div className="mt-3 flex flex-wrap gap-2">
-        {values.length ? values.map(tagChip) : <span className="text-sm text-ink/48">Empty</span>}
-      </div>
-    </section>
+    <article className={`min-h-36 rounded-lg border p-4 ${toneClass[insight.tone]}`}>
+      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/50">{insight.title}</p>
+      <p className={`mt-3 text-2xl font-semibold leading-none ${valueClass[insight.tone]}`}>
+        {insight.value}
+      </p>
+      <p className="mt-3 text-sm leading-6 text-ink/66">{insight.detail}</p>
+    </article>
   );
 }
 
@@ -965,24 +1213,456 @@ function SnapshotRow({ label, value }: { label: string; value: string }) {
   );
 }
 
+function buildStrategyStats(trades: TradeEntry[]): StrategyStat[] {
+  const groups = trades.reduce<Record<string, TradeEntry[]>>((acc, trade) => {
+    const key = trade.strategy.trim() || "Untitled strategy";
+    acc[key] = [...(acc[key] ?? []), trade];
+    return acc;
+  }, {});
+
+  return Object.entries(groups)
+    .map(([name, group]) => {
+      const sorted = [...group].sort((a, b) => tradePnl(b) - tradePnl(a));
+      const bestTrade = sorted[0];
+      const worstTrade = sorted[sorted.length - 1];
+      if (!bestTrade || !worstTrade) return null;
+
+      const pnls = group.map(tradePnl);
+      const totalPnl = pnls.reduce((sum, pnl) => sum + pnl, 0);
+      const wins = pnls.filter((pnl) => pnl > 0).length;
+      const losses = pnls.filter((pnl) => pnl < 0).length;
+      const symbols = Array.from(new Set(group.map((trade) => trade.symbol).filter(Boolean)));
+      const setups = Array.from(new Set(group.map((trade) => trade.setup).filter(Boolean)));
+
+      return {
+        name,
+        count: group.length,
+        wins,
+        losses,
+        winRate: Math.round((wins / group.length) * 100),
+        totalPnl,
+        avgPnl: totalPnl / group.length,
+        symbols,
+        setups,
+        bestTrade,
+        worstTrade
+      };
+    })
+    .filter((stat): stat is StrategyStat => Boolean(stat))
+    .sort((a, b) => b.totalPnl - a.totalPnl);
+}
+
+function buildLabelStats(trades: TradeEntry[], labelFor: (trade: TradeEntry) => string): LabelStat[] {
+  const groups = trades.reduce<Record<string, TradeEntry[]>>((acc, trade) => {
+    const key = labelFor(trade).trim() || "Unlabeled";
+    acc[key] = [...(acc[key] ?? []), trade];
+    return acc;
+  }, {});
+
+  return Object.entries(groups)
+    .map(([label, group]) => {
+      const pnls = group.map(tradePnl);
+      const totalPnl = pnls.reduce((sum, pnl) => sum + pnl, 0);
+      const wins = pnls.filter((pnl) => pnl > 0).length;
+
+      return {
+        label,
+        count: group.length,
+        wins,
+        winRate: Math.round((wins / group.length) * 100),
+        totalPnl,
+        avgPnl: totalPnl / group.length
+      };
+    })
+    .sort((a, b) => b.totalPnl - a.totalPnl);
+}
+
+function buildTradingInsights(state: WorkspaceState, strategyStats: StrategyStat[]): TradingInsight[] {
+  if (!state.trades.length) {
+    return [
+      {
+        title: "Strategy Edge",
+        value: "Waiting",
+        detail: "Log closed trades with strategy, setup, and state labels to calculate edge.",
+        tone: "neutral"
+      },
+      {
+        title: "Vault Coverage",
+        value: `${state.vault.length} sources`,
+        detail: "Captured links and uploads will appear on the map as evidence nodes.",
+        tone: state.vault.length ? "good" : "neutral"
+      }
+    ];
+  }
+
+  const totalPnl = state.trades.reduce((sum, trade) => sum + tradePnl(trade), 0);
+  const wins = state.trades.filter((trade) => tradePnl(trade) > 0).length;
+  const winRate = Math.round((wins / state.trades.length) * 100);
+  const setupStats = buildLabelStats(state.trades, (trade) => trade.setup || "No setup");
+  const emotionStats = buildLabelStats(state.trades, (trade) => trade.emotion || "No state");
+  const bestStrategy = strategyStats[0];
+  const worstStrategy = [...strategyStats].sort((a, b) => a.totalPnl - b.totalPnl)[0];
+  const bestSetup = setupStats[0];
+  const worstEmotion = [...emotionStats].sort((a, b) => a.totalPnl - b.totalPnl)[0];
+  const routineDates = new Set(state.journal.filter((entry) => entry.routineDone).map((entry) => entry.date));
+  const routineTrades = state.trades.filter((trade) => routineDates.has(trade.entryDate));
+  const nonRoutineTrades = state.trades.filter((trade) => !routineDates.has(trade.entryDate));
+  const insights: TradingInsight[] = [
+    {
+      title: "Net Edge",
+      value: formatCurrency(totalPnl),
+      detail: `${state.trades.length} closed trades at ${winRate}% win rate.`,
+      tone: totalPnl > 0 ? "good" : totalPnl < 0 ? "bad" : "neutral"
+    }
+  ];
+
+  if (bestStrategy) {
+    insights.push({
+      title: "Best Strategy",
+      value: bestStrategy.name,
+      detail: `${formatCurrency(bestStrategy.totalPnl)} across ${bestStrategy.count} trades; ${bestStrategy.winRate}% win rate.`,
+      tone: bestStrategy.totalPnl >= 0 ? "good" : "warn"
+    });
+  }
+
+  if (worstStrategy) {
+    insights.push({
+      title: worstStrategy.totalPnl < 0 ? "Strategy Leak" : "Weakest Sample",
+      value: worstStrategy.name,
+      detail: `${formatCurrency(worstStrategy.totalPnl)} total, ${formatCurrency(worstStrategy.avgPnl)} average trade.`,
+      tone: worstStrategy.totalPnl < 0 ? "bad" : "warn"
+    });
+  }
+
+  if (bestSetup) {
+    insights.push({
+      title: "Best Setup",
+      value: bestSetup.label,
+      detail: `${formatCurrency(bestSetup.totalPnl)} across ${bestSetup.count} trades; ${bestSetup.winRate}% win rate.`,
+      tone: bestSetup.totalPnl >= 0 ? "good" : "warn"
+    });
+  }
+
+  if (worstEmotion) {
+    insights.push({
+      title: "State Drag",
+      value: worstEmotion.label,
+      detail: `${formatCurrency(worstEmotion.totalPnl)} total when this state was tagged.`,
+      tone: worstEmotion.totalPnl < 0 ? "bad" : "neutral"
+    });
+  }
+
+  if (routineTrades.length && nonRoutineTrades.length) {
+    const routineAverage = averagePnl(routineTrades);
+    const nonRoutineAverage = averagePnl(nonRoutineTrades);
+    const delta = routineAverage - nonRoutineAverage;
+    insights.push({
+      title: "Routine Effect",
+      value: formatCurrency(delta),
+      detail: `${formatCurrency(routineAverage)} avg on routine days vs ${formatCurrency(nonRoutineAverage)} otherwise.`,
+      tone: delta > 0 ? "good" : delta < 0 ? "bad" : "neutral"
+    });
+  } else {
+    insights.push({
+      title: "Journal Coverage",
+      value: `${state.journal.length} entries`,
+      detail: "Routine comparisons activate once trades exist on both routine and non-routine days.",
+      tone: state.journal.length ? "warn" : "neutral"
+    });
+  }
+
+  return insights.slice(0, 6);
+}
+
+function averagePnl(trades: TradeEntry[]) {
+  if (!trades.length) return 0;
+  return trades.reduce((sum, trade) => sum + tradePnl(trade), 0) / trades.length;
+}
+
+function buildGraphModel(state: WorkspaceState): GraphModel {
+  const nodes = new Map<string, GraphNode>();
+  const edgeIds = new Set<string>();
+  const edges: GraphEdge[] = [];
+  const memoryId = "memory";
+
+  addGraphNode(nodes, {
+    id: memoryId,
+    label: "Trading Memory",
+    type: "memory",
+    detail: `${state.trades.length} trades, ${state.journal.length} journal entries, ${state.vault.length} vault sources.`,
+    weight: Math.max(1, state.trades.length + state.journal.length + state.vault.length)
+  });
+
+  buildStrategyStats(state.trades).forEach((stat) => {
+    addGraphNode(nodes, {
+      id: graphId("strategy", stat.name),
+      label: stat.name,
+      type: "strategy",
+      detail: `${formatCurrency(stat.totalPnl)} across ${stat.count} trades; ${stat.winRate}% win rate.`,
+      weight: stat.count,
+      pnl: stat.totalPnl
+    });
+    addGraphEdge(edges, edgeIds, memoryId, graphId("strategy", stat.name), "strategy");
+  });
+
+  state.trades.forEach((trade) => {
+    const pnl = tradePnl(trade);
+    const tradeId = `trade:${trade.id}`;
+    const strategyLabel = trade.strategy.trim() || "Untitled strategy";
+    const strategyId = graphId("strategy", strategyLabel);
+    const symbolId = graphId("symbol", trade.symbol);
+    const setupLabel = trade.setup.trim() || "No setup";
+    const setupId = graphId("setup", setupLabel);
+    const emotionLabel = trade.emotion.trim() || "No state";
+    const emotionId = graphId("emotion", emotionLabel);
+
+    addGraphNode(nodes, {
+      id: tradeId,
+      label: `${trade.symbol} ${trade.entryDate}`,
+      type: "trade",
+      detail: `${trade.side} trade using ${strategyLabel}. ${trade.notes || "No notes captured."}`,
+      weight: 1,
+      pnl
+    });
+    addGraphNode(nodes, {
+      id: symbolId,
+      label: trade.symbol,
+      type: "symbol",
+      detail: "Symbol traded in this workspace.",
+      weight: 1,
+      pnl
+    });
+    addGraphNode(nodes, {
+      id: setupId,
+      label: setupLabel,
+      type: "setup",
+      detail: "Execution setup label from the trade log.",
+      weight: 1,
+      pnl
+    });
+    addGraphNode(nodes, {
+      id: emotionId,
+      label: emotionLabel,
+      type: "emotion",
+      detail: "Trader state captured with trades or journal entries.",
+      weight: 1,
+      pnl
+    });
+
+    addGraphEdge(edges, edgeIds, memoryId, tradeId, "trade");
+    addGraphEdge(edges, edgeIds, tradeId, strategyId, "strategy");
+    addGraphEdge(edges, edgeIds, tradeId, symbolId, "symbol");
+    addGraphEdge(edges, edgeIds, tradeId, setupId, "setup");
+    addGraphEdge(edges, edgeIds, tradeId, emotionId, "state");
+  });
+
+  state.journal.forEach((entry) => {
+    const journalId = `journal:${entry.id}`;
+    const emotionId = graphId("emotion", entry.emotion || "No state");
+
+    addGraphNode(nodes, {
+      id: journalId,
+      label: entry.title,
+      type: "journal",
+      detail: `${entry.date}. ${entry.body}`,
+      weight: 1
+    });
+    addGraphNode(nodes, {
+      id: emotionId,
+      label: entry.emotion || "No state",
+      type: "emotion",
+      detail: "Trader state captured with trades or journal entries.",
+      weight: 1
+    });
+    addGraphEdge(edges, edgeIds, memoryId, journalId, "journal");
+    addGraphEdge(edges, edgeIds, journalId, emotionId, "state");
+
+    if (entry.routineDone) {
+      const routineId = graphId("tag", "routine complete");
+      addGraphNode(nodes, {
+        id: routineId,
+        label: "routine complete",
+        type: "tag",
+        detail: "Journal entries marked with completed routine.",
+        weight: 1
+      });
+      addGraphEdge(edges, edgeIds, journalId, routineId, "routine");
+    }
+
+    entry.tags.forEach((tag) => {
+      const tagId = graphId("tag", tag);
+      addGraphNode(nodes, {
+        id: tagId,
+        label: tag,
+        type: "tag",
+        detail: "Journal or vault tag.",
+        weight: 1
+      });
+      addGraphEdge(edges, edgeIds, journalId, tagId, "tag");
+    });
+  });
+
+  state.vault.forEach((item) => {
+    const sourceId = `source:${item.id}`;
+    addGraphNode(nodes, {
+      id: sourceId,
+      label: item.title,
+      type: "source",
+      detail: `${item.kind} from ${item.source || "local upload"}. ${item.body.slice(0, 220)}`,
+      weight: 1
+    });
+    addGraphEdge(edges, edgeIds, memoryId, sourceId, "source");
+
+    if (item.kind === "strategy" || item.tags.some((tag) => tag.toLowerCase().includes("strategy"))) {
+      const strategyId = graphId("strategy", item.title);
+      addGraphNode(nodes, {
+        id: strategyId,
+        label: item.title,
+        type: "strategy",
+        detail: "Strategy research captured in the vault.",
+        weight: 1
+      });
+      addGraphEdge(edges, edgeIds, sourceId, strategyId, "strategy note");
+    }
+
+    [item.kind, ...item.tags].filter(Boolean).forEach((tag) => {
+      const tagId = graphId("tag", tag);
+      addGraphNode(nodes, {
+        id: tagId,
+        label: tag,
+        type: "tag",
+        detail: "Journal or vault tag.",
+        weight: 1
+      });
+      addGraphEdge(edges, edgeIds, sourceId, tagId, "tag");
+    });
+  });
+
+  return {
+    nodes: positionGraphNodes(Array.from(nodes.values())),
+    edges
+  };
+}
+
+function addGraphNode(nodes: Map<string, GraphNode>, next: GraphNode) {
+  const current = nodes.get(next.id);
+  if (!current) {
+    nodes.set(next.id, next);
+    return;
+  }
+
+  current.weight += next.weight;
+  if (next.pnl !== undefined) {
+    current.pnl = (current.pnl ?? 0) + next.pnl;
+  }
+}
+
+function addGraphEdge(edges: GraphEdge[], edgeIds: Set<string>, from: string, to: string, label: string) {
+  if (from === to) return;
+  const id = `${from}->${to}:${label}`;
+  if (edgeIds.has(id)) return;
+  edgeIds.add(id);
+  edges.push({ id, from, to, label });
+}
+
+function graphId(type: GraphNodeType, value: string) {
+  const slug = value.toLowerCase().trim().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+  return `${type}:${slug || "untitled"}`;
+}
+
+function positionGraphNodes(nodes: GraphNode[]): PositionedGraphNode[] {
+  const centerX = 460;
+  const centerY = 280;
+  const config: Record<GraphNodeType, { radius: number; offset: number }> = {
+    memory: { radius: 0, offset: 0 },
+    strategy: { radius: 112, offset: -0.8 },
+    trade: { radius: 176, offset: 0.15 },
+    symbol: { radius: 238, offset: -1.2 },
+    setup: { radius: 232, offset: 0.72 },
+    emotion: { radius: 144, offset: 1.8 },
+    source: { radius: 216, offset: 2.7 },
+    journal: { radius: 198, offset: -2.7 },
+    tag: { radius: 248, offset: 2.05 }
+  };
+  const types: GraphNodeType[] = [
+    "strategy",
+    "trade",
+    "symbol",
+    "setup",
+    "emotion",
+    "source",
+    "journal",
+    "tag"
+  ];
+  const order = new Map<string, { index: number; total: number }>();
+
+  types.forEach((type) => {
+    const group = nodes
+      .filter((node) => node.type === type)
+      .sort((a, b) => b.weight - a.weight || a.label.localeCompare(b.label));
+    group.forEach((node, index) => order.set(node.id, { index, total: group.length }));
+  });
+
+  return nodes.map((node) => {
+    if (node.type === "memory") {
+      return { ...node, x: centerX, y: centerY };
+    }
+
+    const nodeOrder = order.get(node.id) ?? { index: 0, total: 1 };
+    const nodeConfig = config[node.type];
+    const angle = nodeConfig.offset + (Math.PI * 2 * nodeOrder.index) / Math.max(1, nodeOrder.total);
+    const radius = Math.min(252, nodeConfig.radius + Math.min(18, nodeOrder.total * 0.45));
+
+    return {
+      ...node,
+      x: centerX + Math.cos(angle) * radius,
+      y: centerY + Math.sin(angle) * radius
+    };
+  });
+}
+
+function graphNodeStyle(type: GraphNodeType) {
+  const styles: Record<GraphNodeType, { fill: string; stroke: string }> = {
+    memory: { fill: "#f7f3ea", stroke: "#ffffff" },
+    strategy: { fill: "#266f83", stroke: "#8dd6e5" },
+    trade: { fill: "#a85f32", stroke: "#e2a06f" },
+    symbol: { fill: "#476a4d", stroke: "#9cc69f" },
+    setup: { fill: "#b48924", stroke: "#e0c36e" },
+    emotion: { fill: "#9f3f46", stroke: "#e79399" },
+    source: { fill: "#6d5bd0", stroke: "#b8adff" },
+    journal: { fill: "#2f7f62", stroke: "#94d8b9" },
+    tag: { fill: "#6f6b5f", stroke: "#d8d1c3" }
+  };
+
+  return styles[type];
+}
+
+function graphNodeRadius(node: GraphNode) {
+  if (node.type === "memory") return 24;
+  return Math.min(20, 8 + Math.sqrt(node.weight) * 3);
+}
+
+function shortLabel(value: string, limit: number) {
+  if (value.length <= limit) return value;
+  return `${value.slice(0, Math.max(1, limit - 3))}...`;
+}
+
 function bestTradeLabel(trades: TradeEntry[]) {
   if (!trades.length) return "-";
   const trade = [...trades].sort((a, b) => tradePnl(b) - tradePnl(a))[0];
+  if (!trade) return "-";
   return `${trade.symbol} ${formatCurrency(tradePnl(trade))}`;
 }
 
 function worstTradeLabel(trades: TradeEntry[]) {
   if (!trades.length) return "-";
   const trade = [...trades].sort((a, b) => tradePnl(a) - tradePnl(b))[0];
+  if (!trade) return "-";
   return `${trade.symbol} ${formatCurrency(tradePnl(trade))}`;
 }
 
 function topStrategyLabel(trades: TradeEntry[]) {
-  const counts = trades.reduce<Record<string, number>>((acc, trade) => {
-    const key = trade.strategy || "Untitled";
-    acc[key] = (acc[key] ?? 0) + 1;
-    return acc;
-  }, {});
-  const [strategy] = Object.entries(counts).sort((a, b) => b[1] - a[1])[0] ?? [];
-  return strategy ?? "-";
+  const topStrategy = buildStrategyStats(trades)[0];
+  if (!topStrategy) return "-";
+  return `${topStrategy.name} ${formatCurrency(topStrategy.totalPnl)}`;
 }
