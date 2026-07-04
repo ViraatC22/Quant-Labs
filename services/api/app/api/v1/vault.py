@@ -1,7 +1,14 @@
+import mimetypes
+import re
+from html.parser import HTMLParser
+from pathlib import Path
 from typing import Annotated
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -13,9 +20,176 @@ from app.schemas.vault import (
     JournalEntryRead,
     SourceDocumentCreate,
     SourceDocumentRead,
+    VaultImportRead,
+    VaultUrlImportRequest,
 )
 
 router = APIRouter()
+
+MAX_IMPORT_BYTES = 1_500_000
+MAX_BODY_CHARS = 24_000
+TEXT_EXTENSIONS = {".txt", ".md", ".markdown", ".csv", ".json", ".log", ".pine", ".py"}
+KEYWORD_TAGS = {
+    "orb",
+    "vwap",
+    "breakout",
+    "pullback",
+    "risk",
+    "strategy",
+    "trade",
+    "journal",
+    "backtest",
+    "paper",
+    "loss",
+    "setup",
+}
+
+
+class _HTMLTextExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.title = ""
+        self.description = ""
+        self._in_title = False
+        self._skip_depth = 0
+        self._parts: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in {"script", "style", "noscript", "svg"}:
+            self._skip_depth += 1
+        if tag == "title":
+            self._in_title = True
+        if tag == "meta":
+            attr_map = {key.lower(): value or "" for key, value in attrs}
+            name = attr_map.get("name", "").lower()
+            prop = attr_map.get("property", "").lower()
+            if name == "description" or prop == "og:description":
+                self.description = attr_map.get("content", "").strip()
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in {"script", "style", "noscript", "svg"} and self._skip_depth:
+            self._skip_depth -= 1
+        if tag == "title":
+            self._in_title = False
+
+    def handle_data(self, data: str) -> None:
+        text = data.strip()
+        if not text:
+            return
+        if self._in_title:
+            self.title = f"{self.title} {text}".strip()
+            return
+        if not self._skip_depth:
+            self._parts.append(text)
+
+    @property
+    def text(self) -> str:
+        return _clean_text(" ".join(self._parts))
+
+
+def _clean_text(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _decode_bytes(raw: bytes, content_type: str) -> str:
+    charset_match = re.search(r"charset=([\w.-]+)", content_type, re.IGNORECASE)
+    charset = charset_match.group(1) if charset_match else "utf-8"
+    try:
+        return raw.decode(charset, errors="replace")
+    except LookupError:
+        return raw.decode("utf-8", errors="replace")
+
+
+def _domain_tag(url: str) -> str:
+    host = urlparse(url).netloc.lower().removeprefix("www.")
+    return host.split(":")[0] or "link"
+
+
+def _infer_kind(source: str, content_type: str) -> str:
+    suffix = Path(urlparse(source).path or source).suffix.lower()
+    normalized_type = content_type.split(";")[0].lower()
+    if normalized_type == "text/html":
+        return "article"
+    if normalized_type == "application/pdf" or suffix == ".pdf":
+        return "pdf"
+    if normalized_type.startswith("image/"):
+        return "screenshot"
+    if suffix == ".csv":
+        return "broker_import"
+    if suffix in {".pine", ".py"}:
+        return "strategy"
+    return "note"
+
+
+def _keyword_tags(text: str) -> list[str]:
+    lowered = text.lower()
+    return sorted(tag for tag in KEYWORD_TAGS if tag in lowered)
+
+
+def _metadata_tags(title: str, body: str, source: str, kind: str) -> list[str]:
+    tags = [kind]
+    if source.startswith("http"):
+        tags.append(_domain_tag(source))
+    tags.extend(_keyword_tags(f"{title} {body[:4000]}"))
+    return sorted({tag for tag in tags if tag})
+
+
+def _fallback_title(source: str) -> str:
+    parsed = urlparse(source)
+    if parsed.netloc:
+        path_name = Path(parsed.path).stem.replace("-", " ").replace("_", " ").strip()
+        return path_name.title() or parsed.netloc.removeprefix("www.")
+    return Path(source).stem.replace("-", " ").replace("_", " ").strip().title() or source
+
+
+def _html_import(raw: bytes, source: str, content_type: str) -> VaultImportRead:
+    parser = _HTMLTextExtractor()
+    parser.feed(_decode_bytes(raw, content_type))
+    body_parts = [part for part in [parser.description, parser.text] if part]
+    body = "\n\n".join(body_parts)[:MAX_BODY_CHARS]
+    title = _clean_text(parser.title) or _fallback_title(source)
+    kind = _infer_kind(source, content_type)
+    return VaultImportRead(
+        title=title[:240],
+        kind=kind,
+        source=source,
+        body=body or f"Imported {source}",
+        tags=_metadata_tags(title, body, source, kind),
+        metadata={"content_type": content_type, "import_method": "url"},
+    )
+
+
+def _bytes_import(raw: bytes, source: str, content_type: str) -> VaultImportRead:
+    kind = _infer_kind(source, content_type)
+    title = _fallback_title(source)
+    if kind in {"note", "strategy", "broker_import"} or content_type.startswith("text/"):
+        body = _decode_bytes(raw, content_type)[:MAX_BODY_CHARS]
+    else:
+        size_kb = max(1, round(len(raw) / 1024))
+        body = (
+            f"Uploaded {kind} file: {source} ({size_kb} KB). "
+            "Text extraction is queued for a later parser."
+        )
+
+    return VaultImportRead(
+        title=title[:240],
+        kind=kind,
+        source=source,
+        body=body,
+        tags=_metadata_tags(title, body, source, kind),
+        metadata={
+            "content_type": content_type or "application/octet-stream",
+            "byte_count": len(raw),
+            "import_method": "file" if not source.startswith("http") else "url",
+        },
+    )
+
+
+def _import_bytes(raw: bytes, source: str, content_type: str) -> VaultImportRead:
+    normalized_type = content_type.split(";")[0].lower()
+    if normalized_type == "text/html":
+        return _html_import(raw, source, content_type)
+    return _bytes_import(raw, source, content_type)
 
 
 def _document_read(document: SourceDocument) -> SourceDocumentRead:
@@ -43,6 +217,58 @@ def _journal_read(entry: JournalEntry) -> JournalEntryRead:
         created_at=entry.created_at,
         updated_at=entry.updated_at,
     )
+
+
+@router.post("/import-url", response_model=VaultImportRead)
+def import_url(payload: VaultUrlImportRequest) -> VaultImportRead:
+    parsed = urlparse(payload.url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="URL must start with http:// or https://.",
+        )
+
+    request = Request(
+        payload.url,
+        headers={"User-Agent": "QuantLabsVaultImporter/0.1 (+local-first research vault)"},
+    )
+
+    try:
+        with urlopen(request, timeout=10) as response:
+            content_type = response.headers.get("content-type", "application/octet-stream")
+            raw = response.read(MAX_IMPORT_BYTES + 1)
+    except HTTPError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Could not import URL: HTTP {exc.code}.",
+        ) from exc
+    except URLError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Could not import URL: {exc.reason}.",
+        ) from exc
+
+    if len(raw) > MAX_IMPORT_BYTES:
+        raw = raw[:MAX_IMPORT_BYTES]
+
+    return _import_bytes(raw, payload.url, content_type)
+
+
+@router.post("/import-file", response_model=VaultImportRead)
+async def import_file(file: Annotated[UploadFile, File()]) -> VaultImportRead:
+    raw = await file.read(MAX_IMPORT_BYTES + 1)
+    if len(raw) > MAX_IMPORT_BYTES:
+        raw = raw[:MAX_IMPORT_BYTES]
+
+    filename = file.filename or "uploaded-file"
+    content_type = (
+        file.content_type or mimetypes.guess_type(filename)[0] or "application/octet-stream"
+    )
+    suffix = Path(filename).suffix.lower()
+    if suffix in TEXT_EXTENSIONS and content_type == "application/octet-stream":
+        content_type = "text/plain"
+
+    return _import_bytes(raw, filename, content_type)
 
 
 @router.post("/documents", response_model=SourceDocumentRead, status_code=201)

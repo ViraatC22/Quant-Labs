@@ -8,9 +8,9 @@ import {
   Download,
   FileText,
   GitBranch,
+  Link2,
   LineChart,
   Plus,
-  Save,
   Search,
   ShieldCheck,
   Trash2,
@@ -30,6 +30,15 @@ type VaultItem = {
   body: string;
   tags: string[];
   createdAt: string;
+};
+
+type ImportedVaultItem = {
+  title: string;
+  kind: string;
+  source: string;
+  body: string;
+  tags: string[];
+  metadata?: Record<string, unknown>;
 };
 
 type JournalEntry = {
@@ -79,6 +88,9 @@ const emptyState: WorkspaceState = {
   journal: [],
   trades: []
 };
+
+const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+const textLikeExtensions = [".txt", ".md", ".markdown", ".csv", ".json", ".log", ".pine", ".py"];
 
 function newId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -135,6 +147,70 @@ function tagChip(tag: string) {
   );
 }
 
+function vaultItemFromImport(item: ImportedVaultItem): VaultItem {
+  return {
+    id: newId(),
+    title: item.title || "Untitled source",
+    kind: item.kind || "note",
+    source: item.source || "local upload",
+    body: item.body || "Imported source",
+    tags: Array.from(new Set(item.tags ?? [])),
+    createdAt: new Date().toISOString()
+  };
+}
+
+function hostFromUrl(url: string) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "link";
+  }
+}
+
+function fallbackLinkImport(url: string): ImportedVaultItem {
+  const parsed = new URL(url);
+  const pathTitle = parsed.pathname.split("/").filter(Boolean).pop()?.replaceAll("-", " ");
+  const title = pathTitle || parsed.hostname.replace(/^www\./, "");
+  return {
+    title,
+    kind: "article",
+    source: url,
+    body: `Imported link: ${url}`,
+    tags: ["article", hostFromUrl(url)],
+    metadata: { import_method: "client_url_fallback" }
+  };
+}
+
+async function fallbackFileImport(file: File): Promise<ImportedVaultItem> {
+  const extension = file.name.includes(".") ? `.${file.name.split(".").pop()?.toLowerCase()}` : "";
+  const kind = file.type.startsWith("image/")
+    ? "screenshot"
+    : file.type === "application/pdf" || extension === ".pdf"
+      ? "pdf"
+      : extension === ".csv"
+        ? "broker_import"
+        : extension === ".pine" || extension === ".py"
+          ? "strategy"
+          : "note";
+  const canReadText = file.type.startsWith("text/") || textLikeExtensions.includes(extension);
+  const body = canReadText
+    ? (await file.text()).slice(0, 24000)
+    : `Uploaded ${kind} file: ${file.name} (${Math.max(1, Math.round(file.size / 1024))} KB).`;
+
+  return {
+    title: file.name.replace(/\.[^.]+$/, "").replaceAll("-", " ").replaceAll("_", " "),
+    kind,
+    source: file.name,
+    body,
+    tags: Array.from(new Set([kind, extension.replace(".", ""), file.type.split("/")[0]].filter(Boolean))),
+    metadata: {
+      import_method: "client_file_fallback",
+      content_type: file.type || "application/octet-stream",
+      byte_count: file.size
+    }
+  };
+}
+
 export function WorkspaceApp() {
   const [activeTab, setActiveTab] = useState<TabKey>("vault");
   const [state, setState] = useState<WorkspaceState>(() => {
@@ -155,6 +231,11 @@ export function WorkspaceApp() {
     }
   });
   const [query, setQuery] = useState("");
+  const [vaultUrl, setVaultUrl] = useState("");
+  const [importStatus, setImportStatus] = useState<{
+    tone: "idle" | "loading" | "success" | "error";
+    message: string;
+  }>({ tone: "idle", message: "Waiting for a link or file." });
 
   useEffect(() => {
     window.localStorage.setItem(storageKey, JSON.stringify(state));
@@ -228,25 +309,73 @@ export function WorkspaceApp() {
     };
   }, [state]);
 
-  function addVaultItem(event: FormEvent<HTMLFormElement>) {
+  function saveImportedVaultItem(item: ImportedVaultItem) {
+    const vaultItem = vaultItemFromImport(item);
+    setState((current) => ({ ...current, vault: [vaultItem, ...current.vault] }));
+    setImportStatus({
+      tone: "success",
+      message: `Imported "${vaultItem.title}" and auto-filled ${vaultItem.tags.length} tags.`
+    });
+  }
+
+  async function importVaultUrl(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const title = String(form.get("title") ?? "").trim();
-    const body = String(form.get("body") ?? "").trim();
-    if (!title || !body) return;
+    const url = vaultUrl.trim();
+    if (!url) return;
+    try {
+      const parsed = new URL(url);
+      if (!["http:", "https:"].includes(parsed.protocol)) {
+        throw new Error("Unsupported URL protocol");
+      }
+    } catch {
+      setImportStatus({
+        tone: "error",
+        message: "Use a full http:// or https:// link."
+      });
+      return;
+    }
 
-    const item: VaultItem = {
-      id: newId(),
-      title,
-      kind: String(form.get("kind") ?? "note"),
-      source: String(form.get("source") ?? "").trim(),
-      body,
-      tags: splitTags(String(form.get("tags") ?? "")),
-      createdAt: new Date().toISOString()
-    };
+    setImportStatus({ tone: "loading", message: "Reading link and extracting vault fields..." });
+    try {
+      const response = await fetch(`${apiBaseUrl}/api/v1/vault/import-url`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url })
+      });
+      if (!response.ok) throw new Error(await response.text());
+      saveImportedVaultItem((await response.json()) as ImportedVaultItem);
+    } catch {
+      saveImportedVaultItem(fallbackLinkImport(url));
+      setImportStatus({
+        tone: "success",
+        message: "Captured the link locally. Full text extraction needs the API to reach that URL."
+      });
+    }
+    setVaultUrl("");
+  }
 
-    setState((current) => ({ ...current, vault: [item, ...current.vault] }));
-    event.currentTarget.reset();
+  async function importVaultFile(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setImportStatus({ tone: "loading", message: `Uploading ${file.name} and extracting fields...` });
+    try {
+      const form = new FormData();
+      form.append("file", file);
+      const response = await fetch(`${apiBaseUrl}/api/v1/vault/import-file`, {
+        method: "POST",
+        body: form
+      });
+      if (!response.ok) throw new Error(await response.text());
+      saveImportedVaultItem((await response.json()) as ImportedVaultItem);
+    } catch {
+      saveImportedVaultItem(await fallbackFileImport(file));
+      setImportStatus({
+        tone: "success",
+        message: "Imported the file locally. Rich parsing will improve when parser workers are added."
+      });
+    }
+    event.target.value = "";
   }
 
   function addJournalEntry(event: FormEvent<HTMLFormElement>) {
@@ -378,45 +507,84 @@ export function WorkspaceApp() {
 
           {activeTab === "vault" && (
             <section className="grid gap-4 xl:grid-cols-[360px_1fr]">
-              <form
-                className="rounded-lg border border-line bg-white/86 p-4 shadow-panel"
-                onSubmit={addVaultItem}
-              >
+              <section className="rounded-lg border border-line bg-white/86 p-4 shadow-panel">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-base font-semibold text-ink">Vault Capture</h2>
-                  <Save aria-hidden="true" className="text-signal" size={20} strokeWidth={2.1} />
+                  <h2 className="text-base font-semibold text-ink">Auto Capture</h2>
+                  <Upload aria-hidden="true" className="text-signal" size={20} strokeWidth={2.1} />
                 </div>
-                <div className="mt-4 grid gap-3">
-                  <Field label="Title">
-                    <input className={textInputClass()} name="title" required />
-                  </Field>
-                  <Field label="Type">
-                    <select className={textInputClass()} name="kind">
-                      <option value="note">Note</option>
-                      <option value="article">Article</option>
-                      <option value="strategy">Strategy</option>
-                      <option value="screenshot">Screenshot</option>
-                      <option value="broker_import">Broker Import</option>
-                    </select>
-                  </Field>
-                  <Field label="Source">
-                    <input className={textInputClass()} name="source" placeholder="URL or origin" />
-                  </Field>
-                  <Field label="Tags">
-                    <input className={textInputClass()} name="tags" placeholder="orb, vwap, mistake" />
-                  </Field>
-                  <Field label="Body">
-                    <textarea className={textareaClass()} name="body" required />
-                  </Field>
-                  <button
-                    className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-ink px-3 text-sm font-semibold text-white transition hover:bg-ink/88"
-                    type="submit"
+                <form className="mt-4 grid gap-3" onSubmit={importVaultUrl}>
+                  <label className="grid gap-1.5 text-sm font-medium text-ink/72">
+                    Link
+                    <div className="flex gap-2">
+                      <input
+                        className={`${textInputClass()} min-w-0 flex-1`}
+                        onChange={(event) => setVaultUrl(event.target.value)}
+                        placeholder="https://..."
+                        type="url"
+                        value={vaultUrl}
+                      />
+                      <button
+                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-ink px-3 text-sm font-semibold text-white transition hover:bg-ink/88"
+                        disabled={importStatus.tone === "loading"}
+                        type="submit"
+                      >
+                        <Link2 aria-hidden="true" size={17} strokeWidth={2.3} />
+                        Import
+                      </button>
+                    </div>
+                  </label>
+                </form>
+
+                <div className="mt-4 grid gap-3 border-t border-line pt-4">
+                  <label className="grid cursor-pointer gap-2 rounded-lg border border-dashed border-line bg-paper/45 p-4 text-center transition hover:border-signal/40 hover:bg-signal/5">
+                    <Upload aria-hidden="true" className="mx-auto text-signal" size={24} strokeWidth={2.1} />
+                    <span className="text-sm font-semibold text-ink">Upload a file</span>
+                    <span className="text-xs text-ink/55">PDF, image, CSV, Markdown, text, JSON, Pine, Python</span>
+                    <input
+                      accept=".txt,.md,.markdown,.csv,.json,.pdf,.pine,.py,image/*,text/*,application/pdf"
+                      className="hidden"
+                      onChange={importVaultFile}
+                      type="file"
+                    />
+                  </label>
+                  <div
+                    className={[
+                      "rounded-md border px-3 py-2 text-sm",
+                      importStatus.tone === "error"
+                        ? "border-loss/25 bg-loss/10 text-loss"
+                        : importStatus.tone === "success"
+                          ? "border-moss/25 bg-moss/10 text-moss"
+                          : "border-line bg-paper/60 text-ink/58"
+                    ].join(" ")}
                   >
-                    <Plus aria-hidden="true" size={17} strokeWidth={2.3} />
-                    Add to vault
-                  </button>
+                    {importStatus.message}
+                  </div>
                 </div>
-              </form>
+
+                <div className="mt-4 rounded-md border border-line bg-white p-3">
+                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/48">
+                    Auto-filled fields
+                  </p>
+                  <div className="mt-3 grid gap-2 text-sm text-ink/64">
+                    <div className="flex items-center justify-between gap-3">
+                      <span>Title</span>
+                      <span className="font-medium text-ink">file/link metadata</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span>Type</span>
+                      <span className="font-medium text-ink">MIME / extension</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span>Body</span>
+                      <span className="font-medium text-ink">extracted text</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-3">
+                      <span>Tags</span>
+                      <span className="font-medium text-ink">source + keywords</span>
+                    </div>
+                  </div>
+                </div>
+              </section>
 
               <section className="rounded-lg border border-line bg-white/86 shadow-panel">
                 <div className="flex flex-col gap-3 border-b border-line px-4 py-3 md:flex-row md:items-center md:justify-between">
@@ -445,7 +613,9 @@ export function WorkspaceApp() {
                               {item.kind}
                             </span>
                           </div>
-                          <p className="mt-2 text-sm leading-6 text-ink/68">{item.body}</p>
+                          <p className="mt-2 text-sm leading-6 text-ink/68">
+                            {item.body.length > 900 ? `${item.body.slice(0, 900)}...` : item.body}
+                          </p>
                           <div className="mt-3 flex flex-wrap gap-2">
                             {item.source && tagChip(item.source)}
                             {item.tags.map(tagChip)}

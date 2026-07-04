@@ -25,6 +25,19 @@ class SourceDocumentRead(ApiModel):
     updated_at: datetime
 
 
+class VaultUrlImportRequest(BaseModel):
+    url: str = Field(min_length=1)
+
+
+class VaultImportRead(BaseModel):
+    title: str
+    kind: str
+    source: str
+    body: str
+    tags: list[str] = Field(default_factory=list)
+    metadata: dict = Field(default_factory=dict)
+
+
 class JournalEntryCreate(BaseModel):
     entry_date: date
     title: str = Field(min_length=1, max_length=240)

@@ -25,7 +25,8 @@ Services:
 
 Current app functionality:
 
-- Capture vault notes, articles, strategy notes, and tagged sources.
+- Capture vault records from links or file uploads with title, type, source,
+  body, and tags auto-filled.
 - Log journal entries, emotional state, and routine completion.
 - Log closed trades and calculate P&L / win-rate metrics.
 - View a lightweight strategy graph snapshot from local records.
