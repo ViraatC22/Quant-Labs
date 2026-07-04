@@ -459,6 +459,25 @@ function enrichImportedItem(item: ImportedVaultItem): ImportedVaultItem {
   };
 }
 
+function normalizeImportedItem(item: ImportedVaultItem): ImportedVaultItem {
+  const localEnrichment = enrichImportedItem(item);
+  const aiTags = uniqueTags([...(item.ai_tags ?? []), ...(localEnrichment.ai_tags ?? [])]).sort();
+  const strategyInfo = item.strategy_info ?? localEnrichment.strategy_info ?? null;
+
+  return {
+    ...item,
+    tags: uniqueTags([...(item.tags ?? []), ...aiTags]).sort(),
+    ai_tags: aiTags,
+    strategy_info: strategyInfo,
+    metadata: {
+      ...localEnrichment.metadata,
+      ...item.metadata,
+      generated_tags: aiTags,
+      strategy_info: strategyInfo
+    }
+  };
+}
+
 function hostFromUrl(url: string) {
   try {
     return new URL(url).hostname.replace(/^www\./, "");
@@ -612,7 +631,7 @@ export function WorkspaceApp() {
     : [];
 
   function saveImportedVaultItem(item: ImportedVaultItem) {
-    const vaultItem = vaultItemFromImport(item);
+    const vaultItem = vaultItemFromImport(normalizeImportedItem(item));
     setState((current) => ({ ...current, vault: [vaultItem, ...current.vault] }));
     setImportStatus({
       tone: "success",
