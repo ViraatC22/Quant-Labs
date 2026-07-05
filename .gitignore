@@ -20,3 +20,4 @@ htmlcov/
 uploads/
 local_data/
 *.log
+*.tsbuildinfo

@@ -19,6 +19,10 @@ import {
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 
 import { MetricTile } from "@/components/MetricTile";
+import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 type TabKey = "vault" | "journal" | "trades" | "insights" | "graph";
 
@@ -306,18 +310,18 @@ function Field({
 }
 
 function textInputClass() {
-  return "min-h-10 rounded-md border border-line bg-white px-3 text-sm text-ink outline-none transition placeholder:text-ink/35 focus:border-signal focus:ring-2 focus:ring-signal/15";
+  return "min-h-10 rounded-md border border-input bg-card px-3 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20";
 }
 
 function textareaClass() {
-  return "min-h-28 rounded-md border border-line bg-white px-3 py-2 text-sm text-ink outline-none transition placeholder:text-ink/35 focus:border-signal focus:ring-2 focus:ring-signal/15";
+  return "min-h-28 rounded-md border border-input bg-card px-3 py-2 text-sm text-foreground outline-none transition placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20";
 }
 
 function tagChip(tag: string) {
   return (
-    <span key={tag} className="rounded-md bg-paper px-2 py-1 text-xs font-medium text-ink/68">
+    <Badge key={tag} variant="secondary">
       {tag}
-    </span>
+    </Badge>
   );
 }
 
@@ -789,30 +793,28 @@ export function WorkspaceApp() {
 
   return (
     <>
-      <nav className="flex gap-2 overflow-x-auto border-b border-line bg-white/78 px-4 py-3 backdrop-blur">
-        {tabs.map((tab) => {
-          const Icon = tab.icon;
-          const active = activeTab === tab.key;
+      <Tabs className="border-b bg-card/78 px-4 py-3 backdrop-blur">
+        <TabsList className="max-w-full overflow-x-auto">
+          {tabs.map((tab) => {
+            const Icon = tab.icon;
+            const active = activeTab === tab.key;
 
-          return (
-            <button
-              key={tab.key}
-              className={[
-                "inline-flex min-h-10 items-center gap-2 rounded-md border px-3 text-sm font-medium transition",
-                active
-                  ? "border-signal/30 bg-signal/10 text-signal"
-                  : "border-transparent text-ink/62 hover:border-line hover:bg-paper"
-              ].join(" ")}
-              onClick={() => setActiveTab(tab.key)}
-              type="button"
-              title={tab.label}
-            >
-              <Icon aria-hidden="true" size={17} strokeWidth={2.2} />
-              {tab.label}
-            </button>
-          );
-        })}
-      </nav>
+            return (
+              <TabsTrigger
+                active={active}
+                aria-controls={`${tab.key}-panel`}
+                id={`${tab.key}-tab`}
+                key={tab.key}
+                onClick={() => setActiveTab(tab.key)}
+                title={tab.label}
+              >
+                <Icon aria-hidden="true" size={17} strokeWidth={2.2} />
+                {tab.label}
+              </TabsTrigger>
+            );
+          })}
+        </TabsList>
+      </Tabs>
 
       <div className="mx-auto grid max-w-7xl gap-6 px-4 py-6 lg:grid-cols-[1fr_340px]">
         <section className="space-y-6">
@@ -829,8 +831,13 @@ export function WorkspaceApp() {
           </div>
 
           {activeTab === "vault" && (
-            <section className="grid gap-4 xl:grid-cols-[360px_1fr]">
-              <section className="rounded-lg border border-line bg-white/86 p-4 shadow-panel">
+            <section
+              aria-labelledby="vault-tab"
+              className="grid gap-4 xl:grid-cols-[360px_1fr]"
+              id="vault-panel"
+              role="tabpanel"
+            >
+              <section className="rounded-lg border border-line bg-card/86 p-4 shadow-panel">
                 <div className="flex items-center justify-between">
                   <h2 className="text-base font-semibold text-ink">Auto Capture</h2>
                   <Upload aria-hidden="true" className="text-signal" size={20} strokeWidth={2.1} />
@@ -839,21 +846,20 @@ export function WorkspaceApp() {
                   <label className="grid gap-1.5 text-sm font-medium text-ink/72">
                     Link
                     <div className="flex gap-2">
-                      <input
+                      <Input
                         className={`${textInputClass()} min-w-0 flex-1`}
                         onChange={(event) => setVaultUrl(event.target.value)}
                         placeholder="https://..."
                         type="url"
                         value={vaultUrl}
                       />
-                      <button
-                        className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-ink px-3 text-sm font-semibold text-white transition hover:bg-ink/88"
+                      <Button
                         disabled={importStatus.tone === "loading"}
                         type="submit"
                       >
                         <Link2 aria-hidden="true" size={17} strokeWidth={2.3} />
                         Import
-                      </button>
+                      </Button>
                     </div>
                   </label>
                 </form>
@@ -884,7 +890,7 @@ export function WorkspaceApp() {
                   </div>
                 </div>
 
-                <div className="mt-4 rounded-md border border-line bg-white p-3">
+                <div className="mt-4 rounded-md border border-line bg-card p-3">
                   <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/48">
                     Auto-filled fields
                   </p>
@@ -913,13 +919,13 @@ export function WorkspaceApp() {
                 </div>
               </section>
 
-              <section className="rounded-lg border border-line bg-white/86 shadow-panel">
+              <section className="rounded-lg border border-line bg-card/86 shadow-panel">
                 <div className="flex flex-col gap-3 border-b border-line px-4 py-3 md:flex-row md:items-center md:justify-between">
                   <div>
                     <h2 className="text-base font-semibold text-ink">Learning Vault</h2>
                     <p className="mt-1 text-sm text-ink/58">{filteredVault.length} records</p>
                   </div>
-                  <label className="flex min-h-10 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm text-ink/62">
+                  <label className="flex min-h-10 items-center gap-2 rounded-md border border-line bg-card px-3 text-sm text-ink/62">
                     <Search aria-hidden="true" size={17} />
                     <input
                       className="w-44 bg-transparent outline-none placeholder:text-ink/35"
@@ -991,9 +997,14 @@ export function WorkspaceApp() {
           )}
 
           {activeTab === "journal" && (
-            <section className="grid gap-4 xl:grid-cols-[360px_1fr]">
+            <section
+              aria-labelledby="journal-tab"
+              className="grid gap-4 xl:grid-cols-[360px_1fr]"
+              id="journal-panel"
+              role="tabpanel"
+            >
               <form
-                className="rounded-lg border border-line bg-white/86 p-4 shadow-panel"
+                className="rounded-lg border border-line bg-card/86 p-4 shadow-panel"
                 onSubmit={addJournalEntry}
               >
                 <div className="flex items-center justify-between">
@@ -1031,17 +1042,14 @@ export function WorkspaceApp() {
                   <Field label="Review">
                     <textarea className={textareaClass()} name="body" required />
                   </Field>
-                  <button
-                    className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-ink px-3 text-sm font-semibold text-white transition hover:bg-ink/88"
-                    type="submit"
-                  >
+                  <Button type="submit">
                     <Plus aria-hidden="true" size={17} strokeWidth={2.3} />
                     Save entry
-                  </button>
+                  </Button>
                 </div>
               </form>
 
-              <section className="rounded-lg border border-line bg-white/86 shadow-panel">
+              <section className="rounded-lg border border-line bg-card/86 shadow-panel">
                 <div className="border-b border-line px-4 py-3">
                   <h2 className="text-base font-semibold text-ink">Journal</h2>
                   <p className="mt-1 text-sm text-ink/58">{state.journal.length} entries</p>
@@ -1088,9 +1096,14 @@ export function WorkspaceApp() {
           )}
 
           {activeTab === "trades" && (
-            <section className="grid gap-4 xl:grid-cols-[360px_1fr]">
+            <section
+              aria-labelledby="trades-tab"
+              className="grid gap-4 xl:grid-cols-[360px_1fr]"
+              id="trades-panel"
+              role="tabpanel"
+            >
               <form
-                className="rounded-lg border border-line bg-white/86 p-4 shadow-panel"
+                className="rounded-lg border border-line bg-card/86 p-4 shadow-panel"
                 onSubmit={addTrade}
               >
                 <div className="flex items-center justify-between">
@@ -1151,17 +1164,14 @@ export function WorkspaceApp() {
                   <Field label="Notes">
                     <textarea className={textareaClass()} name="notes" />
                   </Field>
-                  <button
-                    className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-ink px-3 text-sm font-semibold text-white transition hover:bg-ink/88"
-                    type="submit"
-                  >
+                  <Button type="submit">
                     <Plus aria-hidden="true" size={17} strokeWidth={2.3} />
                     Log trade
-                  </button>
+                  </Button>
                 </div>
               </form>
 
-              <section className="overflow-hidden rounded-lg border border-line bg-white/86 shadow-panel">
+              <section className="overflow-hidden rounded-lg border border-line bg-card/86 shadow-panel">
                 <div className="border-b border-line px-4 py-3">
                   <h2 className="text-base font-semibold text-ink">Trades</h2>
                   <p className="mt-1 text-sm text-ink/58">{state.trades.length} closed trades</p>
@@ -1224,8 +1234,13 @@ export function WorkspaceApp() {
           )}
 
           {activeTab === "insights" && (
-            <section className="grid gap-4 xl:grid-cols-[1fr_380px]">
-              <section className="rounded-lg border border-line bg-white/86 p-4 shadow-panel">
+            <section
+              aria-labelledby="insights-tab"
+              className="grid gap-4 xl:grid-cols-[1fr_380px]"
+              id="insights-panel"
+              role="tabpanel"
+            >
+              <section className="rounded-lg border border-line bg-card/86 p-4 shadow-panel">
                 <div className="flex items-center justify-between gap-4">
                   <div>
                     <h2 className="text-base font-semibold text-ink">Trading Insights</h2>
@@ -1243,7 +1258,7 @@ export function WorkspaceApp() {
                 </div>
               </section>
 
-              <section className="overflow-hidden rounded-lg border border-line bg-white/86 shadow-panel">
+              <section className="overflow-hidden rounded-lg border border-line bg-card/86 shadow-panel">
                 <div className="flex items-center justify-between border-b border-line px-4 py-3">
                   <div>
                     <h2 className="text-base font-semibold text-ink">Strategy Scoreboard</h2>
@@ -1292,8 +1307,13 @@ export function WorkspaceApp() {
           )}
 
           {activeTab === "graph" && (
-            <section className="grid gap-4 xl:grid-cols-[1fr_360px]">
-              <section className="rounded-lg border border-line bg-white/86 p-4 shadow-panel">
+            <section
+              aria-labelledby="graph-tab"
+              className="grid gap-4 xl:grid-cols-[1fr_360px]"
+              id="graph-panel"
+              role="tabpanel"
+            >
+              <section className="rounded-lg border border-line bg-card/86 p-4 shadow-panel">
                 <div className="flex items-center justify-between gap-4">
                   <div>
                     <h2 className="text-base font-semibold text-ink">Obsidian Map</h2>
@@ -1374,7 +1394,7 @@ export function WorkspaceApp() {
                 </div>
               </section>
 
-              <section className="rounded-lg border border-line bg-white/86 p-4 shadow-panel">
+              <section className="rounded-lg border border-line bg-card/86 p-4 shadow-panel">
                 <div className="flex items-center justify-between">
                   <h2 className="text-base font-semibold text-ink">Node Detail</h2>
                   <ShieldCheck aria-hidden="true" className="text-moss" size={20} strokeWidth={2.1} />
@@ -1408,7 +1428,7 @@ export function WorkspaceApp() {
 
                       return (
                         <button
-                          className="flex min-h-10 items-center justify-between gap-3 rounded-md border border-line bg-white px-3 text-left text-sm transition hover:bg-paper"
+                          className="flex min-h-10 items-center justify-between gap-3 rounded-md border border-line bg-card px-3 text-left text-sm transition hover:bg-paper"
                           key={edge.id}
                           onClick={() => other && setSelectedGraphNodeId(other.id)}
                           type="button"
@@ -1431,18 +1451,18 @@ export function WorkspaceApp() {
         </section>
 
         <aside className="space-y-6">
-          <section className="rounded-lg border border-line bg-white/86 p-4 shadow-panel">
+          <section className="rounded-lg border border-line bg-card/86 p-4 shadow-panel">
             <h2 className="text-base font-semibold text-ink">Workspace</h2>
             <div className="mt-4 grid gap-2">
-              <button
-                className="inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold text-ink transition hover:bg-paper"
+              <Button
                 onClick={exportWorkspace}
                 type="button"
+                variant="outline"
               >
                 <Download aria-hidden="true" size={17} strokeWidth={2.2} />
                 Export JSON
-              </button>
-              <label className="inline-flex min-h-10 cursor-pointer items-center justify-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold text-ink transition hover:bg-paper">
+              </Button>
+              <label className="inline-flex min-h-10 cursor-pointer items-center justify-center gap-2 rounded-md border border-line bg-card px-3 text-sm font-semibold text-ink transition hover:bg-paper">
                 <Upload aria-hidden="true" size={17} strokeWidth={2.2} />
                 Import JSON
                 <input accept="application/json" className="hidden" onChange={importWorkspace} type="file" />
@@ -1450,7 +1470,7 @@ export function WorkspaceApp() {
             </div>
           </section>
 
-          <section className="rounded-lg border border-line bg-white/86 p-4 shadow-panel">
+          <section className="rounded-lg border border-line bg-card/86 p-4 shadow-panel">
             <h2 className="text-base font-semibold text-ink">Pattern Snapshot</h2>
             <div className="mt-4 space-y-3 text-sm">
               <SnapshotRow label="Best trade" value={bestTradeLabel(state.trades)} />
