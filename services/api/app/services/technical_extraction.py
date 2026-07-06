@@ -88,6 +88,16 @@ TECHNICAL_PATTERNS: dict[str, list[tuple[str, str, str]]] = {
     ],
 }
 
+TECHNICAL_ALIASES = {
+    "avwap",
+    "bos",
+    "choch",
+    "fvg",
+    "orb",
+    "rr",
+    "rvol",
+}
+
 TIMEFRAME_REGEX = (
     r"\b(?:1|2|3|5|10|15|30|45|60)[ -]?"
     r"(?:s|sec|m|min|minute|h|hr|hour)s?\b"
@@ -125,7 +135,26 @@ def technical_tags_from_profile(profile: dict[str, list[str]]) -> list[str]:
 
 
 def extract_technical_tags(text: str) -> list[str]:
-    return technical_tags_from_profile(extract_technical_profile(text))
+    profile = extract_technical_profile(text)
+    tags = set(technical_tags_from_profile(profile))
+    for patterns in TECHNICAL_PATTERNS.values():
+        for pattern, _label, tag in patterns:
+            if re.search(pattern, text, re.IGNORECASE):
+                tags.add(tag)
+    return sorted(tags)
+
+
+def is_technical_tag(value: str) -> bool:
+    return _slug(value) in known_technical_tags()
+
+
+def known_technical_tags() -> set[str]:
+    tags = set(TECHNICAL_ALIASES)
+    for category, patterns in TECHNICAL_PATTERNS.items():
+        for _pattern, label, tag in patterns:
+            slug = _slug(label)
+            tags.update({tag, slug, f"{category.rstrip('s')}:{slug}"})
+    return tags
 
 
 def _slug(value: str) -> str:

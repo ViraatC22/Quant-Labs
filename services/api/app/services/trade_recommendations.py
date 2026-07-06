@@ -4,6 +4,11 @@ from decimal import Decimal
 
 from app.models.domain import SourceDocument, Trade
 from app.schemas.trades import TradeRecommendationRead
+from app.services.technical_extraction import (
+    extract_technical_tags,
+    is_technical_tag,
+    technical_tags_from_profile,
+)
 
 
 def build_trade_recommendations(
@@ -178,22 +183,34 @@ def _technical_tags(source: SourceDocument) -> list[str]:
     metadata = source.source_metadata or {}
     strategy_info = _strategy_info(source) or {}
     tags = set()
+
+    tags.update(
+        extract_technical_tags(
+            " ".join([source.title, source.document_type, source.content_text or ""])
+        )
+    )
+
     for value in [
-        *(metadata.get("tags") or []),
         *(metadata.get("technical_tags") or []),
-        *(metadata.get("generated_tags") or []),
-        *(metadata.get("aiTags") or []),
         *(strategy_info.get("technical_tags") or []),
     ]:
         if str(value).strip():
             tags.add(str(value).strip().lower())
-    profile = strategy_info.get("technical_profile")
-    if isinstance(profile, dict):
-        for category, labels in profile.items():
-            if isinstance(labels, list):
-                for label in labels:
-                    tags.add(str(label).strip().lower())
-                    tags.add(f"{category}:{_normalize(str(label)).replace(' ', '-')}")
+
+    for value in [
+        *(metadata.get("tags") or []),
+        *(metadata.get("generated_tags") or []),
+        *(metadata.get("aiTags") or []),
+    ]:
+        if str(value).strip() and is_technical_tag(str(value)):
+            tags.add(str(value).strip().lower())
+
+    for profile in [
+        metadata.get("technical_profile"),
+        strategy_info.get("technical_profile"),
+    ]:
+        if isinstance(profile, dict):
+            tags.update(technical_tags_from_profile(profile))
     return sorted(tag for tag in tags if tag)
 
 
