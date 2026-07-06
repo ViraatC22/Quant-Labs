@@ -33,6 +33,8 @@ Current app functionality:
 
 - Capture vault records from links or file uploads with title, type, source,
   body, tags, strategy fields, and AI-router metadata auto-filled.
+- Extract trading technicals such as VWAP, FVG, liquidity sweeps, order blocks,
+  support/resistance, sessions, risk rules, and timeframe context from sources.
 - Learn each saved source into memory chunks and a knowledge graph of source,
   strategy, setup, indicator, market, timeframe, rule, and tag nodes.
 - Route source enrichment through deterministic local rules by default, with
@@ -40,6 +42,8 @@ Current app functionality:
 - Log journal entries, emotional state, and routine completion.
 - Log closed trades through detailed fields or a compact one-line quick entry,
   then calculate P&L, win-rate, setup, state, and strategy metrics.
+- Generate trade recommendations from uploaded strategies, extracted
+  technicals, learned source memory, and matching closed-trade history.
 - Blend imported source insights into the current strategy scoreboard so new
   sources create research candidates and influence existing strategy nodes.
 - Move through a dynamic strategy graph with pan, zoom, focus, node detail, and

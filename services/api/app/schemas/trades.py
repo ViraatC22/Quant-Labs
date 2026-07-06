@@ -60,3 +60,16 @@ class TradeRead(ApiModel):
     metadata: dict
     created_at: datetime
     updated_at: datetime
+
+
+class TradeRecommendationRead(BaseModel):
+    id: str
+    title: str
+    action: str
+    strategy: str | None = None
+    setup: str | None = None
+    confidence: float = Field(ge=0.0, le=1.0)
+    technical_tags: list[str] = Field(default_factory=list)
+    rationale: str
+    risk_notes: list[str] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)

@@ -237,9 +237,17 @@ Extract structured trading strategy metadata from this source.
 
 Return one JSON object with:
 - title: best human-readable source or strategy title
-- tags: lowercase short strings
+- tags: lowercase short strings, especially trading technical tags
 - strategy_info: object with keys name, summary, setup, entry_rules, exit_rules,
-  risk_rules, timeframe, indicators, market, confidence
+  risk_rules, timeframe, indicators, market, technical_tags, technical_profile,
+  confidence
+
+technical_tags should include compact tags such as vwap, fair-value-gap,
+liquidity-sweep, support, resistance, order-block, opening-range-breakout,
+risk-reward, position-sizing, trendline, volume-profile.
+
+technical_profile should group labels under keys like indicators, price_action,
+market_structure, setups, risk, sessions, markets, timeframes.
 
 Use null or empty lists when a field is not supported by the evidence. Do not
 invent a profitable strategy. Keep rules short and evidence-grounded.

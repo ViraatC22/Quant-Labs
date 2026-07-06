@@ -32,6 +32,10 @@ from app.services.ai_router import (
     router_mode,
 )
 from app.services.source_learning import delete_source_learning, learn_from_source_document
+from app.services.technical_extraction import (
+    extract_technical_profile,
+    technical_tags_from_profile,
+)
 
 router = APIRouter()
 
@@ -226,6 +230,7 @@ def _metadata_tags(title: str, body: str, source: str, kind: str) -> list[str]:
     if source.startswith("http"):
         tags.append(_domain_tag(source))
     tags.extend(_keyword_tags(f"{title} {body[:4000]}"))
+    tags.extend(technical_tags_from_profile(extract_technical_profile(f"{title} {body[:9000]}")))
     return sorted({tag for tag in tags if tag})
 
 
@@ -290,6 +295,7 @@ def _summary(title: str, body: str) -> str:
 def _ai_tags(title: str, body: str, source: str, kind: str) -> list[str]:
     text = f"{title} {source} {body[:6000]}"
     tags = set(_keyword_tags(text))
+    tags.update(technical_tags_from_profile(extract_technical_profile(text)))
     setup = _first_setup(text)
     market = _first_market(text)
     timeframe = _first_timeframe(text)
@@ -308,8 +314,10 @@ def _ai_tags(title: str, body: str, source: str, kind: str) -> list[str]:
 def _strategy_info(title: str, body: str, kind: str) -> StrategyInfo | None:
     text = f"{title}\n{body[:9000]}"
     sentences = _sentences(text)
+    technical_profile = extract_technical_profile(text)
+    technical_tags = technical_tags_from_profile(technical_profile)
     setup = _first_setup(text)
-    indicators = _indicators(text)
+    indicators = sorted({*_indicators(text), *technical_profile.get("indicators", [])})
     timeframe = _first_timeframe(text)
     market = _first_market(text)
     entry_rules = _rules_from_sentences(
@@ -328,6 +336,7 @@ def _strategy_info(title: str, body: str, kind: str) -> StrategyInfo | None:
         [
             bool(setup),
             bool(indicators),
+            bool(technical_tags),
             bool(timeframe),
             bool(market),
             bool(entry_rules),
@@ -351,6 +360,8 @@ def _strategy_info(title: str, body: str, kind: str) -> StrategyInfo | None:
         timeframe=timeframe,
         indicators=indicators,
         market=market,
+        technical_tags=technical_tags,
+        technical_profile=technical_profile,
         confidence=round(confidence, 2),
     )
 
@@ -363,6 +374,8 @@ def _enriched_import(
     body: str,
     metadata: dict,
 ) -> VaultImportRead:
+    local_technical_profile = extract_technical_profile(f"{title} {body[:9000]}")
+    local_technical_tags = technical_tags_from_profile(local_technical_profile)
     base_tags = _metadata_tags(title, body, source, kind)
     generated_tags = _ai_tags(title, body, source, kind)
     strategy_info = _strategy_info(title, body, kind)
@@ -371,10 +384,31 @@ def _enriched_import(
     if ai_extraction:
         generated_tags = sorted({*generated_tags, *ai_extraction.tags})
         strategy_info = ai_extraction.strategy_info or strategy_info
+        if strategy_info:
+            local_profile = extract_technical_profile(f"{enriched_title} {body[:9000]}")
+            merged_profile = {
+                **local_profile,
+                **{
+                    key: sorted({*local_profile.get(key, []), *values})
+                    for key, values in strategy_info.technical_profile.items()
+                },
+            }
+            strategy_info.technical_profile = merged_profile
+            strategy_info.technical_tags = sorted(
+                {*strategy_info.technical_tags, *technical_tags_from_profile(merged_profile)}
+            )
+            generated_tags = sorted({*generated_tags, *strategy_info.technical_tags})
+
+    technical_tags = strategy_info.technical_tags if strategy_info else local_technical_tags
+    technical_profile = (
+        strategy_info.technical_profile if strategy_info else local_technical_profile
+    )
 
     metadata = {
         **metadata,
         "generated_tags": generated_tags,
+        "technical_tags": technical_tags,
+        "technical_profile": technical_profile,
         "enrichment_method": "ai_router" if ai_extraction else "local_semantic_rules",
         "ai_router": {
             "mode": router_mode(),

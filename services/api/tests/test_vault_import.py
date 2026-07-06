@@ -11,7 +11,10 @@ def test_import_file_auto_extracts_text_fields() -> None:
         files={
             "file": (
                 "orb-notes.md",
-                b"# ORB Strategy\nWait for volume confirmation.",
+                (
+                    b"# ORB Strategy\nWait for VWAP, fair value gap, "
+                    b"liquidity sweep, and volume confirmation."
+                ),
                 "text/markdown",
             )
         },
@@ -22,12 +25,16 @@ def test_import_file_auto_extracts_text_fields() -> None:
     assert payload["title"] == "Orb Notes"
     assert payload["kind"] == "note"
     assert payload["source"] == "orb-notes.md"
-    assert "Wait for volume confirmation" in payload["body"]
+    assert "Wait for VWAP" in payload["body"]
     assert "orb" in payload["tags"]
     assert "orb" in payload["ai_tags"]
     assert "opening-range-breakout" in payload["ai_tags"]
     assert payload["strategy_info"]["setup"] == "Opening range breakout"
     assert "Volume" in payload["strategy_info"]["indicators"]
+    assert "vwap" in payload["metadata"]["technical_tags"]
+    assert "fair-value-gap" in payload["metadata"]["technical_tags"]
+    assert "liquidity-sweep" in payload["metadata"]["technical_tags"]
+    assert "market_structure" in payload["metadata"]["technical_profile"]
     assert payload["metadata"]["enrichment_method"] == "local_semantic_rules"
     assert payload["metadata"]["ai_router"]["mode"] == "local"
 

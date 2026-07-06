@@ -17,8 +17,16 @@ Date: 2026-07-06
 - Added persistent source learning: every saved source is chunked into
   `memory_chunks` and projected into `kg_nodes` / `kg_edges` for source,
   strategy, setup, indicator, market, timeframe, rule, and tag relationships.
+- Added richer technical extraction for source imports, including indicators,
+  price action, market structure, setups, risk concepts, sessions, markets, and
+  timeframes. Cloud AI prompts now explicitly request technical tags/profile;
+  local extraction fills the same fields when no provider is configured.
+- Added `/api/v1/trades/recommendations`, which generates paper-trading
+  recommendations from uploaded strategy sources, extracted technical tags,
+  learned memory summaries, and matching closed-trade history.
 - Added source-card memory summaries in the UI so users can see how many chunks,
   nodes, and edges the personal AI learned from each source.
+- Added source-card technical sections and trade-tab recommendation cards.
 - Upgraded the map with pan, zoom, recenter, focus selected, click-to-focus
   nodes, and connection-driven traversal.
 - Added quick trade logging from one-line text, with live parse preview and

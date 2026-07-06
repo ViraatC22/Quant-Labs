@@ -78,6 +78,12 @@ def test_journal_and_document_persist_and_delete() -> None:
         for node in graph_nodes
     )
     assert any(edge["edge_type"] == "supports_strategy" for edge in graph_edges)
+    recommendations = client.get("/api/v1/trades/recommendations")
+    assert recommendations.status_code == 200
+    recommendation_body = recommendations.json()
+    assert recommendation_body
+    assert recommendation_body[0]["strategy"] == "ORB notes"
+    assert "orb" in recommendation_body[0]["technical_tags"]
 
     assert client.delete(f"/api/v1/vault/journal-entries/{journal_id}").status_code == 204
     assert client.delete(f"/api/v1/vault/documents/{document_id}").status_code == 204

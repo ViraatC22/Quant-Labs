@@ -7,8 +7,9 @@ from sqlalchemy.orm import Session
 
 from app.core.security import get_current_user_id
 from app.db.session import get_db
-from app.models.domain import Trade
-from app.schemas.trades import TradeCreate, TradeRead
+from app.models.domain import SourceDocument, Trade
+from app.schemas.trades import TradeCreate, TradeRead, TradeRecommendationRead
+from app.services.trade_recommendations import build_trade_recommendations
 
 router = APIRouter()
 
@@ -91,6 +92,26 @@ def list_trades(
         select(Trade).where(Trade.user_id == user_id).order_by(Trade.entry_time.desc())
     ).all()
     return [_trade_read(trade) for trade in trades]
+
+
+@router.get("/recommendations", response_model=list[TradeRecommendationRead])
+def list_trade_recommendations(
+    db: Annotated[Session, Depends(get_db)],
+    user_id: Annotated[UUID, Depends(get_current_user_id)],
+) -> list[TradeRecommendationRead]:
+    sources = list(
+        db.scalars(
+            select(SourceDocument)
+            .where(SourceDocument.user_id == user_id)
+            .order_by(SourceDocument.created_at.desc())
+        ).all()
+    )
+    trades = list(
+        db.scalars(
+            select(Trade).where(Trade.user_id == user_id).order_by(Trade.entry_time.desc())
+        ).all()
+    )
+    return build_trade_recommendations(sources=sources, trades=trades)
 
 
 @router.delete("/{trade_id}", status_code=status.HTTP_204_NO_CONTENT)

@@ -21,6 +21,7 @@ def learn_from_source_document(
     metadata = document.source_metadata or {}
     tags = _metadata_tags(metadata)
     strategy_info = _strategy_info(metadata)
+    technical_profile = _technical_profile(metadata, strategy_info)
     chunk_ids = _create_memory_chunks(
         db,
         document=document,
@@ -43,6 +44,7 @@ def learn_from_source_document(
             "document_type": document.document_type,
             "uri": document.uri,
             "tags": tags,
+            "technical_profile": technical_profile,
             "excerpt": text[:360],
         },
         confidence=Decimal("1.0"),
@@ -63,6 +65,8 @@ def learn_from_source_document(
                 "entry_rules": strategy_info.get("entry_rules", []) if strategy_info else [],
                 "exit_rules": strategy_info.get("exit_rules", []) if strategy_info else [],
                 "risk_rules": strategy_info.get("risk_rules", []) if strategy_info else [],
+                "technical_tags": strategy_info.get("technical_tags", []) if strategy_info else [],
+                "technical_profile": technical_profile,
                 "source_title": document.title,
             },
             confidence=_confidence(strategy_info),
@@ -126,6 +130,28 @@ def learn_from_source_document(
                 )
             )
 
+        for technical in _technical_nodes(technical_profile):
+            technical_node = _get_or_create_node(
+                db,
+                user_id=user_id,
+                node_type="technical",
+                label=technical["label"],
+                properties={"category": technical["category"], "source_title": document.title},
+                confidence=_confidence(strategy_info),
+            )
+            learned_nodes.append(technical_node)
+            learned_edges.append(
+                _get_or_create_edge(
+                    db,
+                    user_id=user_id,
+                    edge_type="uses_technical",
+                    from_node=strategy_node,
+                    to_node=technical_node,
+                    evidence_chunk_ids=chunk_ids[:2],
+                    confidence=_confidence(strategy_info),
+                )
+            )
+
         for rule in _strategy_rules(strategy_info):
             rule_node = _get_or_create_node(
                 db,
@@ -175,6 +201,7 @@ def learn_from_source_document(
         "node_count": len({node.id for node in learned_nodes}),
         "edge_count": len({edge.id for edge in learned_edges}),
         "strategy": strategy_node.label if strategy_node else None,
+        "technical_count": len(_technical_nodes(technical_profile)),
         "map_labels": sorted({node.label for node in learned_nodes})[:24],
         "status": "learned",
     }
@@ -347,6 +374,7 @@ def _metadata_tags(metadata: dict) -> list[str]:
                 *(metadata.get("tags") or []),
                 *(metadata.get("aiTags") or []),
                 *(metadata.get("generated_tags") or []),
+                *(metadata.get("technical_tags") or []),
             ]
             if str(tag).strip()
         }
@@ -356,6 +384,27 @@ def _metadata_tags(metadata: dict) -> list[str]:
 def _strategy_info(metadata: dict) -> dict | None:
     value = metadata.get("strategyInfo") or metadata.get("strategy_info")
     return value if isinstance(value, dict) else None
+
+
+def _technical_profile(metadata: dict, strategy_info: dict | None) -> dict[str, list[str]]:
+    profile: dict[str, list[str]] = {}
+    sources = (
+        metadata.get("technical_profile"),
+        (strategy_info or {}).get("technical_profile"),
+    )
+    for source in sources:
+        if not isinstance(source, dict):
+            continue
+        for category, labels in source.items():
+            if not isinstance(labels, list):
+                continue
+            profile[category] = sorted(
+                {
+                    *profile.get(category, []),
+                    *[str(label).strip() for label in labels if str(label).strip()],
+                }
+            )
+    return profile
 
 
 def _strategy_name(title: str, strategy_info: dict | None) -> str:
@@ -384,6 +433,15 @@ def _strategy_attributes(strategy_info: dict) -> list[dict[str, str]]:
         if isinstance(value, str) and value.strip():
             attributes.append({"type": key, "label": value.strip()})
     return attributes
+
+
+def _technical_nodes(profile: dict[str, list[str]]) -> list[dict[str, str]]:
+    nodes: list[dict[str, str]] = []
+    for category, labels in profile.items():
+        for label in labels:
+            if label.strip():
+                nodes.append({"category": category, "label": label.strip()})
+    return nodes
 
 
 def _strategy_rules(strategy_info: dict) -> list[str]:

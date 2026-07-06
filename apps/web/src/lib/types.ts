@@ -10,6 +10,8 @@ export type GeneratedStrategyInfo = {
   timeframe?: string | null;
   indicators?: string[];
   market?: string | null;
+  technical_tags?: string[];
+  technical_profile?: Record<string, string[]>;
   confidence?: number;
 };
 
@@ -17,6 +19,7 @@ export type SourceLearningSummary = {
   chunk_count: number;
   node_count: number;
   edge_count: number;
+  technical_count?: number;
   strategy?: string | null;
   map_labels: string[];
   status: string;
@@ -30,6 +33,8 @@ export type VaultItem = {
   body: string;
   tags: string[];
   aiTags?: string[];
+  technicalTags?: string[];
+  technicalProfile?: Record<string, string[]>;
   strategyInfo?: GeneratedStrategyInfo | null;
   learningSummary?: SourceLearningSummary | null;
   createdAt: string;
@@ -75,6 +80,19 @@ export type TradeEntry = {
   emotion: string;
   notes: string;
   createdAt: string;
+};
+
+export type TradeRecommendation = {
+  id: string;
+  title: string;
+  action: string;
+  strategy?: string | null;
+  setup?: string | null;
+  confidence: number;
+  technical_tags: string[];
+  rationale: string;
+  risk_notes: string[];
+  evidence: string[];
 };
 
 export type WorkspaceState = {

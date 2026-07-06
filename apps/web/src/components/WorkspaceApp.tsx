@@ -34,6 +34,7 @@ import type {
   GeneratedStrategyInfo,
   JournalEntry,
   TradeEntry,
+  TradeRecommendation,
   VaultItem,
   WorkspaceState
 } from "@/lib/types";
@@ -47,6 +48,8 @@ type ImportedVaultItem = {
   body: string;
   tags: string[];
   ai_tags?: string[];
+  technical_tags?: string[];
+  technical_profile?: Record<string, string[]>;
   strategy_info?: GeneratedStrategyInfo | null;
   metadata?: Record<string, unknown>;
 };
@@ -259,6 +262,55 @@ const marketRules = [
   ["es", "futures"],
   ["nq", "futures"]
 ] as const;
+const technicalRules: Record<string, Array<readonly [RegExp, string, string]>> = {
+  indicators: [
+    [/\bvwap\b/i, "VWAP", "vwap"],
+    [/\banchored\s+vwap\b|\bavwap\b/i, "Anchored VWAP", "anchored-vwap"],
+    [/\bema\b|\bexponential moving average\b/i, "EMA", "ema"],
+    [/\bsma\b|\bsimple moving average\b/i, "SMA", "sma"],
+    [/\brsi\b|\brelative strength index\b/i, "RSI", "rsi"],
+    [/\bmacd\b/i, "MACD", "macd"],
+    [/\batr\b|\baverage true range\b/i, "ATR", "atr"],
+    [/\badx\b/i, "ADX", "adx"],
+    [/\bstochastic\b/i, "Stochastic", "stochastic"],
+    [/\bbollinger\b|\bbb\b/i, "Bollinger Bands", "bollinger-bands"],
+    [/\bvolume profile\b/i, "Volume profile", "volume-profile"],
+    [/\brelative volume\b|\brvol\b/i, "Relative volume", "relative-volume"]
+  ],
+  price_action: [
+    [/\bsupport\b/i, "Support", "support"],
+    [/\bresistance\b/i, "Resistance", "resistance"],
+    [/\btrendline\b|\btrend line\b/i, "Trendline", "trendline"],
+    [/\bbreakout\b/i, "Breakout", "breakout"],
+    [/\bbreakdown\b/i, "Breakdown", "breakdown"],
+    [/\bpullback\b/i, "Pullback", "pullback"],
+    [/\breversal\b/i, "Reversal", "reversal"],
+    [/\bgap fill\b/i, "Gap fill", "gap-fill"]
+  ],
+  market_structure: [
+    [/\bmarket structure\b/i, "Market structure", "market-structure"],
+    [/\bbreak of structure\b|\bbos\b/i, "Break of structure", "break-of-structure"],
+    [/\bchange of character\b|\bchoch\b/i, "Change of character", "change-of-character"],
+    [/\bliquidity sweep\b|\bsweep\b/i, "Liquidity sweep", "liquidity-sweep"],
+    [/\border block\b|\bob\b/i, "Order block", "order-block"],
+    [/\bfair value gap\b|\bfvg\b/i, "Fair value gap", "fair-value-gap"],
+    [/\bimbalance\b/i, "Imbalance", "imbalance"],
+    [/\bsupply\b|\bdemand\b/i, "Supply demand", "supply-demand"]
+  ],
+  risk: [
+    [/\bstop loss\b|\bstop\b/i, "Stop loss", "stop-loss"],
+    [/\binvalidation\b/i, "Invalidation", "invalidation"],
+    [/\btake profit\b|\bprofit target\b|\btarget\b/i, "Profit target", "profit-target"],
+    [/\brisk reward\b|\br:r\b|\brr\b/i, "Risk reward", "risk-reward"],
+    [/\bposition siz(e|ing)\b|\bsize\b/i, "Position sizing", "position-sizing"]
+  ],
+  sessions: [
+    [/\bpremarket\b|\bpre-market\b/i, "Premarket", "premarket"],
+    [/\bopen\b|\bopening bell\b/i, "Open", "open"],
+    [/\blondon\b/i, "London", "london-session"],
+    [/\bnew york\b|\bny session\b/i, "New York", "new-york-session"]
+  ]
+};
 
 function newId() {
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -279,6 +331,35 @@ function uniqueTags(values: Array<string | undefined | null>) {
         .filter((value): value is string => Boolean(value))
     )
   );
+}
+
+function slug(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+}
+
+function technicalProfileForText(text: string) {
+  const profile: Record<string, string[]> = {};
+  Object.entries(technicalRules).forEach(([category, rules]) => {
+    const labels = rules
+      .filter(([pattern]) => pattern.test(text))
+      .map(([, label]) => label);
+    if (labels.length) profile[category] = Array.from(new Set(labels)).sort();
+  });
+  const timeframes =
+    text.match(/\b(?:1|2|3|5|10|15|30|45|60)[ -]?(?:s|sec|m|min|minute|h|hr|hour)s?\b|\b(?:daily|weekly|monthly|intraday)\b/gi) ??
+    [];
+  if (timeframes.length) {
+    profile.timeframes = Array.from(new Set(timeframes.map((value) => value.toUpperCase()))).sort();
+  }
+  return profile;
+}
+
+function technicalTagsForProfile(profile: Record<string, string[]>) {
+  return uniqueTags(
+    Object.entries(profile).flatMap(([category, values]) =>
+      values.flatMap((value) => [slug(value), `${category.replace(/s$/, "")}:${slug(value)}`])
+    )
+  ).sort();
 }
 
 function formatCurrency(value: number) {
@@ -327,6 +408,15 @@ function tagChip(tag: string) {
 
 function vaultItemFromImport(item: ImportedVaultItem): VaultItem {
   const aiTags = uniqueTags(item.ai_tags ?? []);
+  const metadataTechnicalProfile =
+    (item.metadata?.technical_profile as Record<string, string[]> | undefined) ?? {};
+  const metadataTechnicalTags = (item.metadata?.technical_tags as string[] | undefined) ?? [];
+  const technicalProfile = item.technical_profile ?? metadataTechnicalProfile;
+  const technicalTags = uniqueTags([
+    ...(item.technical_tags ?? []),
+    ...metadataTechnicalTags,
+    ...technicalTagsForProfile(technicalProfile)
+  ]);
   const strategyInfo = item.strategy_info ?? null;
   const learningSummary = item.metadata?.learned_memory as VaultItem["learningSummary"] | undefined;
 
@@ -336,8 +426,10 @@ function vaultItemFromImport(item: ImportedVaultItem): VaultItem {
     kind: item.kind || "note",
     source: item.source || "local upload",
     body: item.body || "Imported source",
-    tags: uniqueTags([...(item.tags ?? []), ...aiTags]),
+    tags: uniqueTags([...(item.tags ?? []), ...aiTags, ...technicalTags]),
     aiTags,
+    technicalTags,
+    technicalProfile,
     strategyInfo,
     learningSummary: learningSummary ?? null,
     createdAt: new Date().toISOString()
@@ -377,7 +469,10 @@ function firstMatchingRule(
 
 function generatedTagsForImport(item: ImportedVaultItem) {
   const text = `${item.title} ${item.source} ${item.body.slice(0, 6000)}`.toLowerCase();
+  const technicalProfile = technicalProfileForText(text);
+  const technicalTags = technicalTagsForProfile(technicalProfile);
   const tags = [
+    ...technicalTags,
     ...singleWordTags.filter((tag) => textContainsWord(text, tag)),
     ...semanticTagRules.filter(([needle]) => text.includes(needle)).map(([, tag]) => tag)
   ];
@@ -396,12 +491,16 @@ function generatedTagsForImport(item: ImportedVaultItem) {
 function strategyInfoForImport(item: ImportedVaultItem, aiTags: string[]): GeneratedStrategyInfo | null {
   const text = `${item.title}\n${item.body.slice(0, 9000)}`;
   const lowered = text.toLowerCase();
+  const technicalProfile = technicalProfileForText(text);
+  const technicalTags = technicalTagsForProfile(technicalProfile);
   const sentences = sourceSentences(text);
   const setup = firstMatchingRule(text, setupRules);
-  const indicators = indicatorRules
-    .filter(([needle]) => textContainsWord(lowered, needle))
-    .map(([, label]) => label)
-    .sort();
+  const indicators = [
+    ...indicatorRules
+      .filter(([needle]) => textContainsWord(lowered, needle))
+      .map(([, label]) => label),
+    ...(technicalProfile.indicators ?? [])
+  ].sort();
   const market = firstMatchingRule(text, marketRules);
   const timeframe = text.match(/\b(?:1|2|3|5|10|15|30|60)[ -]?(?:m|min|minute|minutes)\b/i)?.[0] ?? null;
   const entryRules = matchingRules(sentences, [
@@ -441,8 +540,10 @@ function strategyInfoForImport(item: ImportedVaultItem, aiTags: string[]): Gener
     exit_rules: exitRules,
     risk_rules: riskRules,
     timeframe,
-    indicators,
+    indicators: Array.from(new Set(indicators)),
     market,
+    technical_tags: technicalTags,
+    technical_profile: technicalProfile,
     confidence: Math.min(0.95, Number((0.25 + signalCount * 0.08).toFixed(2)))
   };
 }
@@ -450,15 +551,21 @@ function strategyInfoForImport(item: ImportedVaultItem, aiTags: string[]): Gener
 function enrichImportedItem(item: ImportedVaultItem): ImportedVaultItem {
   const aiTags = generatedTagsForImport(item);
   const strategyInfo = strategyInfoForImport(item, aiTags);
+  const technicalProfile = technicalProfileForText(`${item.title} ${item.source} ${item.body.slice(0, 9000)}`);
+  const technicalTags = technicalTagsForProfile(technicalProfile);
 
   return {
     ...item,
-    tags: uniqueTags([...(item.tags ?? []), ...aiTags]).sort(),
+    tags: uniqueTags([...(item.tags ?? []), ...aiTags, ...technicalTags]).sort(),
     ai_tags: aiTags,
+    technical_tags: technicalTags,
+    technical_profile: technicalProfile,
     strategy_info: strategyInfo,
     metadata: {
       ...item.metadata,
       generated_tags: aiTags,
+      technical_tags: technicalTags,
+      technical_profile: technicalProfile,
       strategy_info: strategyInfo,
       enrichment_method: "client_semantic_rules"
     }
@@ -468,17 +575,30 @@ function enrichImportedItem(item: ImportedVaultItem): ImportedVaultItem {
 function normalizeImportedItem(item: ImportedVaultItem): ImportedVaultItem {
   const localEnrichment = enrichImportedItem(item);
   const aiTags = uniqueTags([...(item.ai_tags ?? []), ...(localEnrichment.ai_tags ?? [])]).sort();
+  const technicalProfile = {
+    ...(localEnrichment.technical_profile ?? {}),
+    ...(item.technical_profile ?? {})
+  };
+  const technicalTags = uniqueTags([
+    ...(item.technical_tags ?? []),
+    ...(localEnrichment.technical_tags ?? []),
+    ...technicalTagsForProfile(technicalProfile)
+  ]).sort();
   const strategyInfo = item.strategy_info ?? localEnrichment.strategy_info ?? null;
 
   return {
     ...item,
-    tags: uniqueTags([...(item.tags ?? []), ...aiTags]).sort(),
+    tags: uniqueTags([...(item.tags ?? []), ...aiTags, ...technicalTags]).sort(),
     ai_tags: aiTags,
+    technical_tags: technicalTags,
+    technical_profile: technicalProfile,
     strategy_info: strategyInfo,
     metadata: {
       ...localEnrichment.metadata,
       ...item.metadata,
       generated_tags: aiTags,
+      technical_tags: technicalTags,
+      technical_profile: technicalProfile,
       strategy_info: strategyInfo
     }
   };
@@ -545,6 +665,7 @@ export function WorkspaceApp() {
   const [hydrated, setHydrated] = useState(false);
   const [apiOnline, setApiOnline] = useState(false);
   const [aiRouterStatus, setAiRouterStatus] = useState<AiRouterStatus | null>(null);
+  const [tradeRecommendations, setTradeRecommendations] = useState<TradeRecommendation[]>([]);
   const [query, setQuery] = useState("");
   const [vaultUrl, setVaultUrl] = useState("");
   const [quickTradeText, setQuickTradeText] = useState("");
@@ -589,15 +710,17 @@ export function WorkspaceApp() {
 
       if (online) {
         try {
-          const [trades, journal, vault, aiStatus] = await Promise.all([
+          const [trades, journal, vault, aiStatus, recommendations] = await Promise.all([
             api.listTrades(),
             api.listJournal(),
             api.listDocuments(),
-            api.getAiRouterStatus().catch(() => null)
+            api.getAiRouterStatus().catch(() => null),
+            api.listTradeRecommendations().catch(() => [])
           ]);
           if (cancelled) return;
           setState({ vault, journal, trades });
           setAiRouterStatus(aiStatus);
+          setTradeRecommendations(recommendations);
           setApiOnline(true);
           setHydrated(true);
           return;
@@ -608,6 +731,7 @@ export function WorkspaceApp() {
 
       loadLocal();
       setAiRouterStatus(null);
+      setTradeRecommendations([]);
       if (!cancelled) setHydrated(true);
     }
 
@@ -670,6 +794,8 @@ export function WorkspaceApp() {
         item.body,
         item.tags.join(" "),
         item.aiTags?.join(" ") ?? "",
+        item.technicalTags?.join(" ") ?? "",
+        JSON.stringify(item.technicalProfile ?? {}),
         JSON.stringify(item.strategyInfo ?? {}),
         JSON.stringify(item.learningSummary ?? {})
       ]
@@ -708,8 +834,15 @@ export function WorkspaceApp() {
     [quickTradeText]
   );
   const tradingInsights = useMemo(
-    () => buildTradingInsights(state, strategyStats, sourceStrategySignals, aiRouterStatus),
-    [aiRouterStatus, sourceStrategySignals, state, strategyStats]
+    () =>
+      buildTradingInsights(
+        state,
+        strategyStats,
+        sourceStrategySignals,
+        aiRouterStatus,
+        tradeRecommendations
+      ),
+    [aiRouterStatus, sourceStrategySignals, state, strategyStats, tradeRecommendations]
   );
   const graph = useMemo(
     () => buildGraphModel(state, sourceStrategySignals, strategyStats),
@@ -762,6 +895,15 @@ export function WorkspaceApp() {
     });
   }
 
+  async function refreshTradeRecommendations() {
+    if (!apiOnline) return;
+    try {
+      setTradeRecommendations(await api.listTradeRecommendations());
+    } catch {
+      setApiOnline(false);
+    }
+  }
+
   async function saveImportedVaultItem(item: ImportedVaultItem) {
     const vaultItem = vaultItemFromImport(normalizeImportedItem(item));
     let stored = vaultItem;
@@ -773,6 +915,7 @@ export function WorkspaceApp() {
       }
     }
     setState((current) => ({ ...current, vault: [stored, ...current.vault] }));
+    void refreshTradeRecommendations();
     setImportStatus({
       tone: "success",
       message: `Imported "${stored.title}" with ${stored.tags.length} tags${
@@ -867,6 +1010,7 @@ export function WorkspaceApp() {
           [collection]: [stored, ...(current[collection] as unknown as T[])]
         }) as WorkspaceState
     );
+    void refreshTradeRecommendations();
   }
 
   async function addJournalEntry(event: FormEvent<HTMLFormElement>) {
@@ -962,6 +1106,9 @@ export function WorkspaceApp() {
       ...current,
       [collection]: current[collection].filter((item) => item.id !== id)
     }));
+    if (collection === "trades" || collection === "vault") {
+      void refreshTradeRecommendations();
+    }
   }
 
   function exportWorkspace() {
@@ -1139,6 +1286,8 @@ export function WorkspaceApp() {
                 <div className="divide-y divide-line">
                   {filteredVault.map((item) => {
                     const aiTags = item.aiTags ?? [];
+                    const technicalTags = item.technicalTags ?? [];
+                    const technicalProfile = item.technicalProfile ?? item.strategyInfo?.technical_profile ?? {};
                     const strategyInfo = item.strategyInfo;
                     const learningSummary = item.learningSummary;
 
@@ -1172,6 +1321,25 @@ export function WorkspaceApp() {
                                 <div className="mt-2 flex flex-wrap gap-2">{aiTags.map(tagChip)}</div>
                               </div>
                             )}
+                            {technicalTags.length > 0 && (
+                              <div className="mt-4 border-l-2 border-signal/35 pl-3">
+                                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/48">
+                                  Technicals
+                                </p>
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  {technicalTags.slice(0, 18).map(tagChip)}
+                                </div>
+                                <div className="mt-3 grid gap-2 text-sm md:grid-cols-2">
+                                  {Object.entries(technicalProfile).slice(0, 6).map(([category, values]) => (
+                                    <SnapshotRow
+                                      key={category}
+                                      label={category.replaceAll("_", " ")}
+                                      value={values.slice(0, 3).join(", ")}
+                                    />
+                                  ))}
+                                </div>
+                              </div>
+                            )}
                             {strategyInfo && (
                               <StrategyInfoSummary strategyInfo={strategyInfo} />
                             )}
@@ -1185,6 +1353,11 @@ export function WorkspaceApp() {
                                   <SnapshotRow label="Nodes" value={String(learningSummary.node_count)} />
                                   <SnapshotRow label="Edges" value={String(learningSummary.edge_count)} />
                                 </div>
+                                {learningSummary.technical_count !== undefined && (
+                                  <p className="mt-2 text-sm leading-6 text-ink/64">
+                                    {learningSummary.technical_count} technical relationships learned.
+                                  </p>
+                                )}
                                 {learningSummary.strategy && (
                                   <p className="mt-2 text-sm leading-6 text-ink/64">
                                     Learned into {learningSummary.strategy}.
@@ -1425,7 +1598,33 @@ export function WorkspaceApp() {
                 </div>
               </form>
 
-              <section className="overflow-hidden rounded-lg border border-line bg-card/86 shadow-panel">
+              <div className="grid gap-4">
+                <section className="rounded-lg border border-line bg-card/86 p-4 shadow-panel">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <h2 className="text-base font-semibold text-ink">AI Trade Recommendations</h2>
+                      <p className="mt-1 text-sm text-ink/58">
+                        Based on uploaded strategies, technical tags, learned memory, and trade history
+                      </p>
+                    </div>
+                    <Wand2 aria-hidden="true" className="text-caution" size={20} strokeWidth={2.1} />
+                  </div>
+                  <div className="mt-4 grid gap-3">
+                    {tradeRecommendations.map((recommendation) => (
+                      <TradeRecommendationCard
+                        key={recommendation.id}
+                        recommendation={recommendation}
+                      />
+                    ))}
+                    {!tradeRecommendations.length && (
+                      <div className="rounded-md border border-line bg-paper/60 px-3 py-3 text-sm font-medium text-ink/52">
+                        Add a strategy source to generate recommendations.
+                      </div>
+                    )}
+                  </div>
+                </section>
+
+                <section className="overflow-hidden rounded-lg border border-line bg-card/86 shadow-panel">
                 <div className="border-b border-line px-4 py-3">
                   <h2 className="text-base font-semibold text-ink">Trades</h2>
                   <p className="mt-1 text-sm text-ink/58">{state.trades.length} closed trades</p>
@@ -1483,7 +1682,8 @@ export function WorkspaceApp() {
                     </div>
                   )}
                 </div>
-              </section>
+                </section>
+              </div>
             </section>
           )}
 
@@ -1851,6 +2051,12 @@ function StrategyInfoSummary({ strategyInfo }: { strategyInfo: GeneratedStrategy
       {strategyInfo.indicators?.length ? (
         <div className="mt-3 flex flex-wrap gap-2">{strategyInfo.indicators.map(tagChip)}</div>
       ) : null}
+      {strategyInfo.technical_tags?.length ? (
+        <div className="mt-3">
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/45">Technicals</p>
+          <div className="mt-2 flex flex-wrap gap-2">{strategyInfo.technical_tags.slice(0, 16).map(tagChip)}</div>
+        </div>
+      ) : null}
       <StrategyRuleList label="Entry" values={strategyInfo.entry_rules ?? []} />
       <StrategyRuleList label="Exit" values={strategyInfo.exit_rules ?? []} />
       <StrategyRuleList label="Risk" values={strategyInfo.risk_rules ?? []} />
@@ -1894,6 +2100,41 @@ function InsightCard({ insight }: { insight: TradingInsight }) {
         {insight.value}
       </p>
       <p className="mt-3 text-sm leading-6 text-ink/66">{insight.detail}</p>
+    </article>
+  );
+}
+
+function TradeRecommendationCard({ recommendation }: { recommendation: TradeRecommendation }) {
+  return (
+    <article className="rounded-lg border border-caution/25 bg-caution/10 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-ink">{recommendation.title}</h3>
+          <p className="mt-1 text-xs font-medium text-ink/52">
+            {Math.round(recommendation.confidence * 100)}% confidence
+          </p>
+        </div>
+        <Badge variant="warning">AI</Badge>
+      </div>
+      <p className="mt-3 text-sm font-medium leading-6 text-ink">{recommendation.action}</p>
+      <p className="mt-2 text-sm leading-6 text-ink/64">{recommendation.rationale}</p>
+      {recommendation.technical_tags.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {recommendation.technical_tags.slice(0, 10).map(tagChip)}
+        </div>
+      )}
+      {recommendation.risk_notes.length > 0 && (
+        <div className="mt-3 border-l-2 border-loss/30 pl-3 text-sm leading-6 text-ink/64">
+          {recommendation.risk_notes.slice(0, 2).map((note) => (
+            <p key={note}>{note}</p>
+          ))}
+        </div>
+      )}
+      {recommendation.evidence.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {recommendation.evidence.slice(0, 3).map(tagChip)}
+        </div>
+      )}
     </article>
   );
 }
@@ -1956,6 +2197,8 @@ function buildSourceStrategySignals(vault: VaultItem[], trades: TradeEntry[]): S
         info?.market,
         info?.timeframe,
         ...(info?.indicators ?? []),
+        ...(info?.technical_tags ?? []),
+        ...(item.technicalTags ?? []),
         ...(matchedSetup ? [matchedSetup] : [])
       ]);
 
@@ -1966,7 +2209,7 @@ function buildSourceStrategySignals(vault: VaultItem[], trades: TradeEntry[]): S
         setup: info?.setup ?? matchedSetup,
         summary: info?.summary,
         confidence: info?.confidence ?? 0.4,
-        tags: uniqueTags([...item.tags, ...(item.aiTags ?? [])]),
+        tags: uniqueTags([...item.tags, ...(item.aiTags ?? []), ...(item.technicalTags ?? [])]),
         rules,
         attributes
       };
@@ -2063,7 +2306,8 @@ function buildTradingInsights(
   state: WorkspaceState,
   strategyStats: StrategyStat[],
   sourceSignals: SourceStrategySignal[],
-  aiRouterStatus: AiRouterStatus | null
+  aiRouterStatus: AiRouterStatus | null,
+  tradeRecommendations: TradeRecommendation[]
 ): TradingInsight[] {
   const learnedSources = state.vault.filter((item) => item.learningSummary);
   const learnedChunks = learnedSources.reduce(
@@ -2107,6 +2351,12 @@ function buildTradingInsights(
         tone: learnedSources.length ? "good" : "neutral"
       },
       {
+        title: "Trade Guidance",
+        value: `${tradeRecommendations.length} ideas`,
+        detail: tradeRecommendations[0]?.action ?? "Recommendations appear after strategy sources are learned.",
+        tone: tradeRecommendations.length ? "good" : "neutral"
+      },
+      {
         title: "Vault Coverage",
         value: `${state.vault.length} sources`,
         detail: "Captured links and uploads will appear on the map as evidence nodes.",
@@ -2147,6 +2397,15 @@ function buildTradingInsights(
       value: `${sourceBackedStrategies.length} linked`,
       detail: `${validatedCount} source-backed strategies have trade validation; ${unvalidatedResearch.length} still need a sample.`,
       tone: unvalidatedResearch.length ? "warn" : "good"
+    });
+  }
+
+  if (tradeRecommendations.length) {
+    insights.push({
+      title: "Trade Guidance",
+      value: tradeRecommendations[0].title,
+      detail: tradeRecommendations[0].action,
+      tone: tradeRecommendations[0].confidence >= 0.7 ? "good" : "warn"
     });
   }
 

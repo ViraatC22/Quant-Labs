@@ -10,6 +10,7 @@ import type {
   GeneratedStrategyInfo,
   JournalEntry,
   TradeEntry,
+  TradeRecommendation,
   VaultItem
 } from "@/lib/types";
 
@@ -111,6 +112,10 @@ export async function deleteTrade(id: string): Promise<void> {
   await request<void>(`/api/v1/trades/${id}`, { method: "DELETE" });
 }
 
+export async function listTradeRecommendations(): Promise<TradeRecommendation[]> {
+  return request<TradeRecommendation[]>("/api/v1/trades/recommendations");
+}
+
 // --------------------------------------------------------------- journal
 type JournalDto = {
   id: string;
@@ -183,6 +188,14 @@ function documentFromDto(dto: DocumentDto): VaultItem {
     body: dto.content_text ?? "",
     tags: (meta.tags as string[]) ?? [],
     aiTags: (meta.aiTags as string[]) ?? (meta.generated_tags as string[]) ?? [],
+    technicalTags:
+      (meta.technicalTags as string[]) ??
+      (meta.technical_tags as string[]) ??
+      ((meta.strategy_info as GeneratedStrategyInfo | null)?.technical_tags ?? []),
+    technicalProfile:
+      (meta.technicalProfile as Record<string, string[]>) ??
+      (meta.technical_profile as Record<string, string[]>) ??
+      ((meta.strategy_info as GeneratedStrategyInfo | null)?.technical_profile ?? {}),
     strategyInfo:
       (meta.strategyInfo as GeneratedStrategyInfo | null) ??
       (meta.strategy_info as GeneratedStrategyInfo | null) ??
@@ -210,6 +223,10 @@ export async function createDocument(item: VaultItem): Promise<VaultItem> {
       source: item.source,
       tags: item.tags,
       aiTags: item.aiTags ?? [],
+      technicalTags: item.technicalTags ?? [],
+      technicalProfile: item.technicalProfile ?? {},
+      technical_tags: item.technicalTags ?? [],
+      technical_profile: item.technicalProfile ?? {},
       strategyInfo: item.strategyInfo ?? null,
       strategy_info: item.strategyInfo ?? null,
       generated_tags: item.aiTags ?? [],
