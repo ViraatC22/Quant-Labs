@@ -328,6 +328,7 @@ function tagChip(tag: string) {
 function vaultItemFromImport(item: ImportedVaultItem): VaultItem {
   const aiTags = uniqueTags(item.ai_tags ?? []);
   const strategyInfo = item.strategy_info ?? null;
+  const learningSummary = item.metadata?.learned_memory as VaultItem["learningSummary"] | undefined;
 
   return {
     id: newId(),
@@ -338,6 +339,7 @@ function vaultItemFromImport(item: ImportedVaultItem): VaultItem {
     tags: uniqueTags([...(item.tags ?? []), ...aiTags]),
     aiTags,
     strategyInfo,
+    learningSummary: learningSummary ?? null,
     createdAt: new Date().toISOString()
   };
 }
@@ -668,7 +670,8 @@ export function WorkspaceApp() {
         item.body,
         item.tags.join(" "),
         item.aiTags?.join(" ") ?? "",
-        JSON.stringify(item.strategyInfo ?? {})
+        JSON.stringify(item.strategyInfo ?? {}),
+        JSON.stringify(item.learningSummary ?? {})
       ]
         .join(" ")
         .toLowerCase()
@@ -774,6 +777,10 @@ export function WorkspaceApp() {
       tone: "success",
       message: `Imported "${stored.title}" with ${stored.tags.length} tags${
         stored.strategyInfo ? " and strategy fields" : ""
+      }${
+        stored.learningSummary
+          ? `; learned ${stored.learningSummary.chunk_count} chunks / ${stored.learningSummary.node_count} map nodes`
+          : ""
       }.`
     });
   }
@@ -1133,6 +1140,7 @@ export function WorkspaceApp() {
                   {filteredVault.map((item) => {
                     const aiTags = item.aiTags ?? [];
                     const strategyInfo = item.strategyInfo;
+                    const learningSummary = item.learningSummary;
 
                     return (
                       <article key={item.id} className="p-4">
@@ -1166,6 +1174,26 @@ export function WorkspaceApp() {
                             )}
                             {strategyInfo && (
                               <StrategyInfoSummary strategyInfo={strategyInfo} />
+                            )}
+                            {learningSummary && (
+                              <div className="mt-4 border-l-2 border-moss/35 pl-3">
+                                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/48">
+                                  Personal AI Memory
+                                </p>
+                                <div className="mt-2 grid gap-2 text-sm md:grid-cols-3">
+                                  <SnapshotRow label="Chunks" value={String(learningSummary.chunk_count)} />
+                                  <SnapshotRow label="Nodes" value={String(learningSummary.node_count)} />
+                                  <SnapshotRow label="Edges" value={String(learningSummary.edge_count)} />
+                                </div>
+                                {learningSummary.strategy && (
+                                  <p className="mt-2 text-sm leading-6 text-ink/64">
+                                    Learned into {learningSummary.strategy}.
+                                  </p>
+                                )}
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  {learningSummary.map_labels.slice(0, 8).map(tagChip)}
+                                </div>
+                              </div>
                             )}
                           </div>
                           <button
@@ -2037,6 +2065,12 @@ function buildTradingInsights(
   sourceSignals: SourceStrategySignal[],
   aiRouterStatus: AiRouterStatus | null
 ): TradingInsight[] {
+  const learnedSources = state.vault.filter((item) => item.learningSummary);
+  const learnedChunks = learnedSources.reduce(
+    (sum, item) => sum + (item.learningSummary?.chunk_count ?? 0),
+    0
+  );
+
   if (!state.trades.length) {
     const strategySources = sourceSignals.length;
 
@@ -2063,6 +2097,14 @@ function buildTradingInsights(
             ? `Cloud extraction is routed through ${aiRouterStatus.active_provider_id}.`
             : "Local semantic extraction is active until an opt-in provider key is configured.",
         tone: aiRouterStatus?.active_provider_id ? "good" : "neutral"
+      },
+      {
+        title: "Memory Bot",
+        value: `${learnedChunks} chunks`,
+        detail: learnedSources.length
+          ? `${learnedSources.length} sources have been learned into the map.`
+          : "Sources become memory chunks and graph facts once saved through the API.",
+        tone: learnedSources.length ? "good" : "neutral"
       },
       {
         title: "Vault Coverage",
@@ -2105,6 +2147,15 @@ function buildTradingInsights(
       value: `${sourceBackedStrategies.length} linked`,
       detail: `${validatedCount} source-backed strategies have trade validation; ${unvalidatedResearch.length} still need a sample.`,
       tone: unvalidatedResearch.length ? "warn" : "good"
+    });
+  }
+
+  if (learnedSources.length) {
+    insights.push({
+      title: "Memory Bot",
+      value: `${learnedChunks} chunks`,
+      detail: `${learnedSources.length} sources are available as graph memory and strategy evidence.`,
+      tone: "good"
     });
   }
 
@@ -2381,8 +2432,12 @@ function buildGraphModel(
       id: sourceId,
       label: item.title,
       type: "source",
-      detail: `${item.kind} from ${item.source || "local upload"}. ${item.body.slice(0, 220)}`,
-      weight: 1
+      detail:
+        `${item.kind} from ${item.source || "local upload"}. ${item.body.slice(0, 220)}` +
+        (item.learningSummary
+          ? ` Learned ${item.learningSummary.chunk_count} chunks into ${item.learningSummary.node_count} nodes.`
+          : ""),
+      weight: Math.max(1, item.learningSummary?.node_count ?? 1)
     });
     addGraphEdge(edges, edgeIds, memoryId, sourceId, "source");
 

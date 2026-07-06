@@ -31,11 +31,12 @@ from app.services.ai_router import (
     provider_status,
     router_mode,
 )
+from app.services.source_learning import delete_source_learning, learn_from_source_document
 
 router = APIRouter()
 
 MAX_IMPORT_BYTES = 1_500_000
-MAX_BODY_CHARS = 24_000
+MAX_BODY_CHARS = 96_000
 TEXT_EXTENSIONS = {".txt", ".md", ".markdown", ".csv", ".json", ".log", ".pine", ".py"}
 KEYWORD_TAGS = {
     "atr",
@@ -366,6 +367,7 @@ def _enriched_import(
     generated_tags = _ai_tags(title, body, source, kind)
     strategy_info = _strategy_info(title, body, kind)
     ai_extraction = extract_strategy_with_ai(title=title, kind=kind, source=source, body=body)
+    enriched_title = ai_extraction.title if ai_extraction and ai_extraction.title else title
     if ai_extraction:
         generated_tags = sorted({*generated_tags, *ai_extraction.tags})
         strategy_info = ai_extraction.strategy_info or strategy_info
@@ -384,7 +386,7 @@ def _enriched_import(
         metadata["strategy_info"] = strategy_info.model_dump()
 
     return VaultImportRead(
-        title=title[:240],
+        title=enriched_title[:240],
         kind=kind,
         source=source,
         body=body,
@@ -555,6 +557,8 @@ def create_document(
         source_metadata=payload.metadata,
     )
     db.add(document)
+    db.flush()
+    learn_from_source_document(db, document=document, user_id=user_id)
     db.commit()
     db.refresh(document)
     return _document_read(document)
@@ -616,6 +620,7 @@ def delete_document(
     document = db.get(SourceDocument, document_id)
     if document is None or document.user_id != user_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+    delete_source_learning(db, document_id=document.id, user_id=user_id)
     db.delete(document)
     db.commit()
 

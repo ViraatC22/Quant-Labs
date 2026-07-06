@@ -14,6 +14,11 @@ Date: 2026-07-06
 - Blended imported strategy sources into the strategy scoreboard, insights, and
   graph. Sources can now create research-only strategy candidates or attach to
   existing strategies by overlapping strategy/setup/tag labels.
+- Added persistent source learning: every saved source is chunked into
+  `memory_chunks` and projected into `kg_nodes` / `kg_edges` for source,
+  strategy, setup, indicator, market, timeframe, rule, and tag relationships.
+- Added source-card memory summaries in the UI so users can see how many chunks,
+  nodes, and edges the personal AI learned from each source.
 - Upgraded the map with pan, zoom, recenter, focus selected, click-to-focus
   nodes, and connection-driven traversal.
 - Added quick trade logging from one-line text, with live parse preview and
@@ -46,7 +51,8 @@ All passed on 2026-07-06.
 ## Next Work
 
 - Add persisted graph nodes/edges from imported sources instead of deriving the
-  graph entirely in the browser.
+  graph entirely in the browser. Source ingestion now writes KG facts; the next
+  step is to hydrate the frontend map directly from `/api/v1/graph/*`.
 - Add a trade ticket parser endpoint so quick trade parsing can become shared
   API behavior and eventually accept screenshots/broker exports.
 - Add source-to-strategy review controls for accepting, merging, or rejecting

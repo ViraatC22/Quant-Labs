@@ -61,10 +61,23 @@ def test_journal_and_document_persist_and_delete() -> None:
         },
     )
     assert document.status_code == 201
-    document_id = document.json()["id"]
+    document_body = document.json()
+    document_id = document_body["id"]
+    learned = document_body["metadata"]["learned_memory"]
+    assert learned["status"] == "learned"
+    assert learned["chunk_count"] >= 1
+    assert learned["node_count"] >= 3
+    assert "ORB notes" in learned["map_labels"]
 
     assert any(e["id"] == journal_id for e in client.get("/api/v1/vault/journal-entries").json())
     assert any(d["id"] == document_id for d in client.get("/api/v1/vault/documents").json())
+    graph_nodes = client.get("/api/v1/graph/nodes").json()
+    graph_edges = client.get("/api/v1/graph/edges").json()
+    assert any(
+        node["label"] == "ORB notes" and node["node_type"] == "source"
+        for node in graph_nodes
+    )
+    assert any(edge["edge_type"] == "supports_strategy" for edge in graph_edges)
 
     assert client.delete(f"/api/v1/vault/journal-entries/{journal_id}").status_code == 204
     assert client.delete(f"/api/v1/vault/documents/{document_id}").status_code == 204

@@ -33,6 +33,8 @@ Current app functionality:
 
 - Capture vault records from links or file uploads with title, type, source,
   body, tags, strategy fields, and AI-router metadata auto-filled.
+- Learn each saved source into memory chunks and a knowledge graph of source,
+  strategy, setup, indicator, market, timeframe, rule, and tag nodes.
 - Route source enrichment through deterministic local rules by default, with
   opt-in provider routing for OpenRouter, Groq, Gemini, and Cerebras keys.
 - Log journal entries, emotional state, and routine completion.

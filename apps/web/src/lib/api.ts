@@ -187,6 +187,10 @@ function documentFromDto(dto: DocumentDto): VaultItem {
       (meta.strategyInfo as GeneratedStrategyInfo | null) ??
       (meta.strategy_info as GeneratedStrategyInfo | null) ??
       null,
+    learningSummary:
+      (meta.learned_memory as VaultItem["learningSummary"] | null) ??
+      (meta.learningSummary as VaultItem["learningSummary"] | null) ??
+      null,
     createdAt: dto.created_at
   };
 }
@@ -206,7 +210,10 @@ export async function createDocument(item: VaultItem): Promise<VaultItem> {
       source: item.source,
       tags: item.tags,
       aiTags: item.aiTags ?? [],
-      strategyInfo: item.strategyInfo ?? null
+      strategyInfo: item.strategyInfo ?? null,
+      strategy_info: item.strategyInfo ?? null,
+      generated_tags: item.aiTags ?? [],
+      learned_memory: item.learningSummary ?? null
     }
   };
   const dto = await request<DocumentDto>("/api/v1/vault/documents", {

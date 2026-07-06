@@ -13,6 +13,15 @@ export type GeneratedStrategyInfo = {
   confidence?: number;
 };
 
+export type SourceLearningSummary = {
+  chunk_count: number;
+  node_count: number;
+  edge_count: number;
+  strategy?: string | null;
+  map_labels: string[];
+  status: string;
+};
+
 export type VaultItem = {
   id: string;
   title: string;
@@ -22,6 +31,7 @@ export type VaultItem = {
   tags: string[];
   aiTags?: string[];
   strategyInfo?: GeneratedStrategyInfo | null;
+  learningSummary?: SourceLearningSummary | null;
   createdAt: string;
 };
 

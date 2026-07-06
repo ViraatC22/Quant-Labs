@@ -20,6 +20,7 @@ class AiProvider:
 
 @dataclass(frozen=True)
 class AiExtraction:
+    title: str | None
     strategy_info: StrategyInfo | None
     tags: list[str]
     provider_id: str
@@ -160,9 +161,11 @@ def _extract_with_provider(
         content = _chat_text(raw)
 
     payload = _parse_json_object(content)
+    title = payload.get("title")
     strategy = payload.get("strategy_info")
     tags = payload.get("tags")
     return AiExtraction(
+        title=title.strip()[:240] if isinstance(title, str) and title.strip() else None,
         strategy_info=StrategyInfo.model_validate(strategy) if isinstance(strategy, dict) else None,
         tags=sorted({str(tag).strip().lower() for tag in tags if str(tag).strip()})
         if isinstance(tags, list)
@@ -233,6 +236,7 @@ def _extraction_prompt(*, title: str, kind: str, source: str, body: str) -> str:
 Extract structured trading strategy metadata from this source.
 
 Return one JSON object with:
+- title: best human-readable source or strategy title
 - tags: lowercase short strings
 - strategy_info: object with keys name, summary, setup, entry_rules, exit_rules,
   risk_rules, timeframe, indicators, market, confidence
