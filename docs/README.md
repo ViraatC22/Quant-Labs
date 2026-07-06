@@ -15,6 +15,7 @@ This folder is the project knowledge base. Keep product plans, architecture, set
 - [Setup Requests](setup-requests.md) — founder/developer checklist for accounts, credentials, local software, and future integrations.
 - [Provider Setup Requests](provider_setup_requests.md) — concise provider-specific setup tracker.
 - [Environment Variables](environment.md) — documented `.env.example` values and security notes.
+- [AI Map And Trade Log Handoff](handoff-ai-map-trade-log-2026-07-06.md) — current implementation notes for the dynamic map, source-backed insights, AI routing, and quick trade logging.
 
 ## UI System
 

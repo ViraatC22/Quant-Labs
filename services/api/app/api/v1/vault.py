@@ -16,6 +16,7 @@ from app.core.security import get_current_user_id
 from app.db.session import get_db
 from app.models.domain import JournalEntry, SourceDocument
 from app.schemas.vault import (
+    AiRouterStatus,
     JournalEntryCreate,
     JournalEntryRead,
     SourceDocumentCreate,
@@ -23,6 +24,12 @@ from app.schemas.vault import (
     StrategyInfo,
     VaultImportRead,
     VaultUrlImportRequest,
+)
+from app.services.ai_router import (
+    active_provider_status,
+    extract_strategy_with_ai,
+    provider_status,
+    router_mode,
 )
 
 router = APIRouter()
@@ -358,10 +365,20 @@ def _enriched_import(
     base_tags = _metadata_tags(title, body, source, kind)
     generated_tags = _ai_tags(title, body, source, kind)
     strategy_info = _strategy_info(title, body, kind)
+    ai_extraction = extract_strategy_with_ai(title=title, kind=kind, source=source, body=body)
+    if ai_extraction:
+        generated_tags = sorted({*generated_tags, *ai_extraction.tags})
+        strategy_info = ai_extraction.strategy_info or strategy_info
+
     metadata = {
         **metadata,
         "generated_tags": generated_tags,
-        "enrichment_method": "local_semantic_rules",
+        "enrichment_method": "ai_router" if ai_extraction else "local_semantic_rules",
+        "ai_router": {
+            "mode": router_mode(),
+            "provider": ai_extraction.provider_id if ai_extraction else None,
+            "model": ai_extraction.model if ai_extraction else None,
+        },
     }
     if strategy_info:
         metadata["strategy_info"] = strategy_info.model_dump()
@@ -458,6 +475,16 @@ def _journal_read(entry: JournalEntry) -> JournalEntryRead:
         metadata=entry.journal_metadata,
         created_at=entry.created_at,
         updated_at=entry.updated_at,
+    )
+
+
+@router.get("/ai/providers", response_model=AiRouterStatus)
+def ai_provider_status() -> AiRouterStatus:
+    active = active_provider_status()
+    return AiRouterStatus(
+        mode=router_mode(),
+        active_provider_id=active.id if active else None,
+        providers=provider_status(),
     )
 
 
@@ -578,3 +605,31 @@ def list_journal_entries(
         .order_by(JournalEntry.entry_date.desc(), JournalEntry.created_at.desc())
     ).all()
     return [_journal_read(entry) for entry in entries]
+
+
+@router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_document(
+    document_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+    user_id: Annotated[UUID, Depends(get_current_user_id)],
+) -> None:
+    document = db.get(SourceDocument, document_id)
+    if document is None or document.user_id != user_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+    db.delete(document)
+    db.commit()
+
+
+@router.delete("/journal-entries/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_journal_entry(
+    entry_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+    user_id: Annotated[UUID, Depends(get_current_user_id)],
+) -> None:
+    entry = db.get(JournalEntry, entry_id)
+    if entry is None or entry.user_id != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Journal entry not found."
+        )
+    db.delete(entry)
+    db.commit()

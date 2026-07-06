@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1.router import api_router
 from app.core.config import settings
+from app.db.session import init_db
 
 
 def create_app() -> FastAPI:
@@ -11,6 +12,9 @@ def create_app() -> FastAPI:
         version=settings.app_version,
         description="Local-first API for the Trading Intelligence OS.",
     )
+
+    # Ensure the schema exists for SQLite dev/test (no-op on PostgreSQL).
+    init_db()
 
     app.add_middleware(
         CORSMiddleware,

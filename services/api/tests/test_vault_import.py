@@ -28,3 +28,22 @@ def test_import_file_auto_extracts_text_fields() -> None:
     assert "opening-range-breakout" in payload["ai_tags"]
     assert payload["strategy_info"]["setup"] == "Opening range breakout"
     assert "Volume" in payload["strategy_info"]["indicators"]
+    assert payload["metadata"]["enrichment_method"] == "local_semantic_rules"
+    assert payload["metadata"]["ai_router"]["mode"] == "local"
+
+
+def test_ai_provider_status_defaults_to_local_mode() -> None:
+    client = TestClient(create_app())
+
+    response = client.get("/api/v1/vault/ai/providers")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["mode"] == "local"
+    assert payload["active_provider_id"] is None
+    assert [provider["id"] for provider in payload["providers"]] == [
+        "openrouter",
+        "groq",
+        "gemini",
+        "cerebras",
+    ]

@@ -32,14 +32,22 @@ Services:
 Current app functionality:
 
 - Capture vault records from links or file uploads with title, type, source,
-  body, and tags auto-filled.
+  body, tags, strategy fields, and AI-router metadata auto-filled.
+- Route source enrichment through deterministic local rules by default, with
+  opt-in provider routing for OpenRouter, Groq, Gemini, and Cerebras keys.
 - Log journal entries, emotional state, and routine completion.
-- Log closed trades and calculate P&L / win-rate metrics.
-- View a lightweight strategy graph snapshot from local records.
+- Log closed trades through detailed fields or a compact one-line quick entry,
+  then calculate P&L, win-rate, setup, state, and strategy metrics.
+- Blend imported source insights into the current strategy scoreboard so new
+  sources create research candidates and influence existing strategy nodes.
+- Move through a dynamic strategy graph with pan, zoom, focus, node detail, and
+  source/trade/journal/tag relationships.
+- Review richer insight cards covering net edge, strategy leaks, source-backed
+  validation gaps, routine effect, and AI-router status.
 - Import/export the local workspace as JSON.
 
-Browser-entered records are stored in local browser storage until the database
-persistence path is wired into the UI.
+When the API is available, records persist to the local API database. If the API
+is offline, the web app falls back to browser-local storage.
 
 The MVP is research, journaling, and paper-only experimentation. Live
 autonomous trading is intentionally out of scope.

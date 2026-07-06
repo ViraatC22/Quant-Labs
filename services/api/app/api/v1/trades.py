@@ -1,7 +1,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -91,3 +91,16 @@ def list_trades(
         select(Trade).where(Trade.user_id == user_id).order_by(Trade.entry_time.desc())
     ).all()
     return [_trade_read(trade) for trade in trades]
+
+
+@router.delete("/{trade_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_trade(
+    trade_id: UUID,
+    db: Annotated[Session, Depends(get_db)],
+    user_id: Annotated[UUID, Depends(get_current_user_id)],
+) -> None:
+    trade = db.get(Trade, trade_id)
+    if trade is None or trade.user_id != user_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trade not found.")
+    db.delete(trade)
+    db.commit()

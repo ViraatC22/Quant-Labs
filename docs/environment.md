@@ -12,6 +12,24 @@ The source of truth for local environment defaults is [../.env.example](../.env.
 | `WEB_PORT` | Next.js web port. Defaults to `3000`. |
 | `NEXT_PUBLIC_API_URL` | Browser-visible API base URL used by the web app. |
 
+## AI Enrichment
+
+Cloud AI extraction is opt-in. With the default `AI_ENRICHMENT_MODE=local`, the
+vault importer uses deterministic local semantic rules and never sends source
+text outside the machine. Set `AI_ENRICHMENT_MODE=auto` only after adding at
+least one provider key and confirming that imported sources may be processed by
+that provider.
+
+| Variable | Purpose |
+| --- | --- |
+| `AI_ENRICHMENT_MODE` | `local`, `auto`, or `off`. `auto` routes imports through configured providers. |
+| `AI_PROVIDER_ORDER` | Comma-separated provider priority list. Defaults to `openrouter,groq,gemini,cerebras`. |
+| `AI_REQUEST_TIMEOUT_SECONDS` | Per-provider extraction timeout before trying the next configured provider. |
+| `OPENROUTER_API_KEY` / `OPENROUTER_MODEL` | OpenRouter chat-completions provider slot. |
+| `GROQ_API_KEY` / `GROQ_MODEL` | Groq OpenAI-compatible chat-completions provider slot. |
+| `GEMINI_API_KEY` / `GEMINI_MODEL` | Google Gemini Interactions API provider slot. |
+| `CEREBRAS_API_KEY` / `CEREBRAS_MODEL` | Cerebras OpenAI-compatible chat-completions provider slot. |
+
 ## Persistence And Infrastructure
 
 | Variable | Purpose |

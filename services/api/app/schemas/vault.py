@@ -53,6 +53,21 @@ class VaultImportRead(BaseModel):
     metadata: dict = Field(default_factory=dict)
 
 
+class AiProviderStatus(BaseModel):
+    id: str
+    label: str
+    configured: bool
+    model: str
+    priority: int
+    protocol: str
+
+
+class AiRouterStatus(BaseModel):
+    mode: str
+    active_provider_id: str | None = None
+    providers: list[AiProviderStatus] = Field(default_factory=list)
+
+
 class JournalEntryCreate(BaseModel):
     entry_date: date
     title: str = Field(min_length=1, max_length=240)

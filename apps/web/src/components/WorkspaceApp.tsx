@@ -5,6 +5,7 @@ import {
   BookMarked,
   BrainCircuit,
   CalendarCheck,
+  Crosshair,
   Download,
   FileText,
   GitBranch,
@@ -13,8 +14,12 @@ import {
   Plus,
   Search,
   ShieldCheck,
+  Sparkles,
   Trash2,
-  Upload
+  Upload,
+  Wand2,
+  ZoomIn,
+  ZoomOut
 } from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 
@@ -23,33 +28,17 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import * as api from "@/lib/api";
+import type {
+  AiRouterStatus,
+  GeneratedStrategyInfo,
+  JournalEntry,
+  TradeEntry,
+  VaultItem,
+  WorkspaceState
+} from "@/lib/types";
 
 type TabKey = "vault" | "journal" | "trades" | "insights" | "graph";
-
-type VaultItem = {
-  id: string;
-  title: string;
-  kind: string;
-  source: string;
-  body: string;
-  tags: string[];
-  aiTags?: string[];
-  strategyInfo?: GeneratedStrategyInfo | null;
-  createdAt: string;
-};
-
-type GeneratedStrategyInfo = {
-  name?: string | null;
-  summary?: string | null;
-  setup?: string | null;
-  entry_rules?: string[];
-  exit_rules?: string[];
-  risk_rules?: string[];
-  timeframe?: string | null;
-  indicators?: string[];
-  market?: string | null;
-  confidence?: number;
-};
 
 type ImportedVaultItem = {
   title: string;
@@ -62,39 +51,6 @@ type ImportedVaultItem = {
   metadata?: Record<string, unknown>;
 };
 
-type JournalEntry = {
-  id: string;
-  date: string;
-  title: string;
-  emotion: string;
-  routineDone: boolean;
-  body: string;
-  tags: string[];
-  createdAt: string;
-};
-
-type TradeEntry = {
-  id: string;
-  symbol: string;
-  side: "long" | "short";
-  entryDate: string;
-  entryPrice: number;
-  exitPrice: number;
-  quantity: number;
-  fees: number;
-  strategy: string;
-  setup: string;
-  emotion: string;
-  notes: string;
-  createdAt: string;
-};
-
-type WorkspaceState = {
-  vault: VaultItem[];
-  journal: JournalEntry[];
-  trades: TradeEntry[];
-};
-
 type StrategyStat = {
   name: string;
   count: number;
@@ -105,8 +61,14 @@ type StrategyStat = {
   avgPnl: number;
   symbols: string[];
   setups: string[];
-  bestTrade: TradeEntry;
-  worstTrade: TradeEntry;
+  bestTrade?: TradeEntry;
+  worstTrade?: TradeEntry;
+  sourceCount: number;
+  sourceTitles: string[];
+  researchConfidence: number;
+  researchSummary?: string;
+  researchRules: string[];
+  validationState: "live" | "research" | "mixed";
 };
 
 type LabelStat = {
@@ -160,6 +122,44 @@ type GraphEdge = {
 type GraphModel = {
   nodes: PositionedGraphNode[];
   edges: GraphEdge[];
+};
+
+type SourceStrategySignal = {
+  sourceId: string;
+  sourceTitle: string;
+  strategyName: string;
+  setup?: string | null;
+  summary?: string | null;
+  confidence: number;
+  tags: string[];
+  rules: string[];
+  attributes: string[];
+};
+
+type GraphViewport = {
+  centerX: number;
+  centerY: number;
+  zoom: number;
+};
+
+type GraphDragState = {
+  startX: number;
+  startY: number;
+  startView: GraphViewport;
+};
+
+type QuickTradeDraft = {
+  symbol: string;
+  side: TradeEntry["side"];
+  entryDate: string;
+  entryPrice: number;
+  exitPrice: number;
+  quantity: number;
+  fees: number;
+  strategy: string;
+  setup: string;
+  emotion: string;
+  notes: string;
 };
 
 const storageKey = "quant-labs.workspace.v1";
@@ -536,34 +536,91 @@ async function fallbackFileImport(file: File): Promise<ImportedVaultItem> {
 
 export function WorkspaceApp() {
   const [activeTab, setActiveTab] = useState<TabKey>("vault");
-  const [state, setState] = useState<WorkspaceState>(() => {
-    if (typeof window === "undefined") return emptyState;
-
-    const saved = window.localStorage.getItem(storageKey);
-    if (!saved) return emptyState;
-
-    try {
-      const parsed = JSON.parse(saved) as WorkspaceState;
-      return {
-        vault: parsed.vault ?? [],
-        journal: parsed.journal ?? [],
-        trades: parsed.trades ?? []
-      };
-    } catch {
-      return emptyState;
-    }
-  });
+  // Seed with the empty state so the server render and the first client render
+  // match. The persisted workspace is loaded from localStorage after mount (see
+  // the effect below) to avoid an SSR/client hydration mismatch once data exists.
+  const [state, setState] = useState<WorkspaceState>(emptyState);
+  const [hydrated, setHydrated] = useState(false);
+  const [apiOnline, setApiOnline] = useState(false);
+  const [aiRouterStatus, setAiRouterStatus] = useState<AiRouterStatus | null>(null);
   const [query, setQuery] = useState("");
   const [vaultUrl, setVaultUrl] = useState("");
+  const [quickTradeText, setQuickTradeText] = useState("");
+  const [quickTradeMessage, setQuickTradeMessage] = useState("Paste one line like: AAPL long 100 -> 110 x10 strategy VWAP setup ORB.");
   const [importStatus, setImportStatus] = useState<{
     tone: "idle" | "loading" | "success" | "error";
     message: string;
   }>({ tone: "idle", message: "Waiting for a link or file." });
   const [selectedGraphNodeId, setSelectedGraphNodeId] = useState("memory");
+  const [graphView, setGraphView] = useState<GraphViewport>({
+    centerX: 460,
+    centerY: 280,
+    zoom: 1
+  });
+  const [graphDrag, setGraphDrag] = useState<GraphDragState | null>(null);
 
+  // On mount, prefer the API as the source of truth. When it is unreachable,
+  // fall back to the browser-local workspace so the app stays fully usable
+  // offline. Runs after mount, keeping the first render SSR-safe.
   useEffect(() => {
+    let cancelled = false;
+
+    function loadLocal() {
+      try {
+        const saved = window.localStorage.getItem(storageKey);
+        if (saved && !cancelled) {
+          const parsed = JSON.parse(saved) as WorkspaceState;
+          setState({
+            vault: parsed.vault ?? [],
+            journal: parsed.journal ?? [],
+            trades: parsed.trades ?? []
+          });
+        }
+      } catch {
+        // Ignore corrupt storage and start from the empty workspace.
+      }
+    }
+
+    async function load() {
+      const online = await api.checkHealth();
+      if (cancelled) return;
+
+      if (online) {
+        try {
+          const [trades, journal, vault, aiStatus] = await Promise.all([
+            api.listTrades(),
+            api.listJournal(),
+            api.listDocuments(),
+            api.getAiRouterStatus().catch(() => null)
+          ]);
+          if (cancelled) return;
+          setState({ vault, journal, trades });
+          setAiRouterStatus(aiStatus);
+          setApiOnline(true);
+          setHydrated(true);
+          return;
+        } catch {
+          // API became unreachable mid-load; use the local cache instead.
+        }
+      }
+
+      loadLocal();
+      setAiRouterStatus(null);
+      if (!cancelled) setHydrated(true);
+    }
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Persist only after the initial load so the empty seed never overwrites
+  // previously saved data on first render.
+  useEffect(() => {
+    if (!hydrated) return;
     window.localStorage.setItem(storageKey, JSON.stringify(state));
-  }, [state]);
+  }, [state, hydrated]);
 
   const metrics = useMemo(() => {
     const netPnl = state.trades.reduce((sum, trade) => sum + tradePnl(trade), 0);
@@ -619,12 +676,42 @@ export function WorkspaceApp() {
     );
   }, [query, state.vault]);
 
-  const strategyStats = useMemo(() => buildStrategyStats(state.trades), [state.trades]);
-  const tradingInsights = useMemo(
-    () => buildTradingInsights(state, strategyStats),
-    [state, strategyStats]
+  const sourceStrategySignals = useMemo(
+    () => buildSourceStrategySignals(state.vault, state.trades),
+    [state.trades, state.vault]
   );
-  const graph = useMemo(() => buildGraphModel(state), [state]);
+  const strategyStats = useMemo(
+    () => buildStrategyStats(state, sourceStrategySignals),
+    [sourceStrategySignals, state]
+  );
+  const strategySuggestions = useMemo(
+    () => strategyStats.map((stat) => stat.name).filter(Boolean),
+    [strategyStats]
+  );
+  const setupSuggestions = useMemo(
+    () =>
+      Array.from(
+        new Set(
+          [
+            ...strategyStats.flatMap((stat) => stat.setups),
+            ...sourceStrategySignals.map((signal) => signal.setup ?? "")
+          ].filter(Boolean)
+        )
+      ),
+    [sourceStrategySignals, strategyStats]
+  );
+  const quickTradePreview = useMemo(
+    () => parseQuickTrade(quickTradeText),
+    [quickTradeText]
+  );
+  const tradingInsights = useMemo(
+    () => buildTradingInsights(state, strategyStats, sourceStrategySignals, aiRouterStatus),
+    [aiRouterStatus, sourceStrategySignals, state, strategyStats]
+  );
+  const graph = useMemo(
+    () => buildGraphModel(state, sourceStrategySignals, strategyStats),
+    [sourceStrategySignals, state, strategyStats]
+  );
   const graphNodeLookup = useMemo(
     () => new Map(graph.nodes.map((node) => [node.id, node])),
     [graph.nodes]
@@ -633,14 +720,60 @@ export function WorkspaceApp() {
   const selectedGraphEdges = selectedGraphNode
     ? graph.edges.filter((edge) => edge.from === selectedGraphNode.id || edge.to === selectedGraphNode.id)
     : [];
+  const graphViewBox = useMemo(() => {
+    const width = 920 / graphView.zoom;
+    const height = 560 / graphView.zoom;
+    return `${graphView.centerX - width / 2} ${graphView.centerY - height / 2} ${width} ${height}`;
+  }, [graphView]);
 
-  function saveImportedVaultItem(item: ImportedVaultItem) {
+  function selectGraphNode(nodeId: string, focus = false) {
+    const node = graphNodeLookup.get(nodeId);
+    setSelectedGraphNodeId(nodeId);
+    if (focus && node) focusGraphNode(node);
+  }
+
+  function focusGraphNode(node: PositionedGraphNode) {
+    setGraphView({ centerX: node.x, centerY: node.y, zoom: Math.max(1.35, graphView.zoom) });
+  }
+
+  function zoomGraph(delta: number) {
+    setGraphView((current) => ({
+      ...current,
+      zoom: Math.min(2.4, Math.max(0.7, Number((current.zoom + delta).toFixed(2))))
+    }));
+  }
+
+  function resetGraphView() {
+    setGraphView({ centerX: 460, centerY: 280, zoom: 1 });
+  }
+
+  function panGraph(event: React.PointerEvent<SVGSVGElement>) {
+    if (!graphDrag) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const unitX = 920 / rect.width / graphDrag.startView.zoom;
+    const unitY = 560 / rect.height / graphDrag.startView.zoom;
+    setGraphView({
+      ...graphDrag.startView,
+      centerX: graphDrag.startView.centerX - (event.clientX - graphDrag.startX) * unitX,
+      centerY: graphDrag.startView.centerY - (event.clientY - graphDrag.startY) * unitY
+    });
+  }
+
+  async function saveImportedVaultItem(item: ImportedVaultItem) {
     const vaultItem = vaultItemFromImport(normalizeImportedItem(item));
-    setState((current) => ({ ...current, vault: [vaultItem, ...current.vault] }));
+    let stored = vaultItem;
+    if (apiOnline) {
+      try {
+        stored = await api.createDocument(vaultItem);
+      } catch {
+        setApiOnline(false);
+      }
+    }
+    setState((current) => ({ ...current, vault: [stored, ...current.vault] }));
     setImportStatus({
       tone: "success",
-      message: `Imported "${vaultItem.title}" with ${vaultItem.tags.length} tags${
-        vaultItem.strategyInfo ? " and strategy fields" : ""
+      message: `Imported "${stored.title}" with ${stored.tags.length} tags${
+        stored.strategyInfo ? " and strategy fields" : ""
       }.`
     });
   }
@@ -670,9 +803,9 @@ export function WorkspaceApp() {
         body: JSON.stringify({ url })
       });
       if (!response.ok) throw new Error(await response.text());
-      saveImportedVaultItem((await response.json()) as ImportedVaultItem);
+      await saveImportedVaultItem((await response.json()) as ImportedVaultItem);
     } catch {
-      saveImportedVaultItem(fallbackLinkImport(url));
+      await saveImportedVaultItem(fallbackLinkImport(url));
       setImportStatus({
         tone: "success",
         message: "Captured the link locally. Full text extraction needs the API to reach that URL."
@@ -694,9 +827,9 @@ export function WorkspaceApp() {
         body: form
       });
       if (!response.ok) throw new Error(await response.text());
-      saveImportedVaultItem((await response.json()) as ImportedVaultItem);
+      await saveImportedVaultItem((await response.json()) as ImportedVaultItem);
     } catch {
-      saveImportedVaultItem(await fallbackFileImport(file));
+      await saveImportedVaultItem(await fallbackFileImport(file));
       setImportStatus({
         tone: "success",
         message: "Imported the file locally. Rich parsing will improve when parser workers are added."
@@ -705,9 +838,34 @@ export function WorkspaceApp() {
     event.target.value = "";
   }
 
-  function addJournalEntry(event: FormEvent<HTMLFormElement>) {
+  // Persist a newly created record: to the API when online (using the returned
+  // server row, which carries the real id), otherwise to local state only.
+  async function persistCreate<T extends { id: string }>(
+    collection: keyof WorkspaceState,
+    local: T,
+    create: (item: T) => Promise<T>
+  ) {
+    let stored = local;
+    if (apiOnline) {
+      try {
+        stored = await create(local);
+      } catch {
+        setApiOnline(false);
+      }
+    }
+    setState(
+      (current) =>
+        ({
+          ...current,
+          [collection]: [stored, ...(current[collection] as unknown as T[])]
+        }) as WorkspaceState
+    );
+  }
+
+  async function addJournalEntry(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const formEl = event.currentTarget;
+    const form = new FormData(formEl);
     const title = String(form.get("title") ?? "").trim();
     const body = String(form.get("body") ?? "").trim();
     if (!title || !body) return;
@@ -723,18 +881,43 @@ export function WorkspaceApp() {
       createdAt: new Date().toISOString()
     };
 
-    setState((current) => ({ ...current, journal: [entry, ...current.journal] }));
-    event.currentTarget.reset();
+    formEl.reset();
+    await persistCreate("journal", entry, api.createJournal);
   }
 
-  function addTrade(event: FormEvent<HTMLFormElement>) {
+  async function addTrade(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const formEl = event.currentTarget;
+    const form = new FormData(formEl);
+    const quickTrade = String(form.get("quickTrade") ?? "").trim();
+    if (quickTrade) {
+      const draft = parseQuickTrade(quickTrade);
+      if (!draft) {
+        setQuickTradeMessage("Could not read that trade. Include symbol, side, entry, exit, and quantity.");
+        return;
+      }
+
+      const trade: TradeEntry = {
+        id: newId(),
+        ...draft,
+        createdAt: new Date().toISOString()
+      };
+
+      formEl.reset();
+      setQuickTradeText("");
+      setQuickTradeMessage(`Logged ${trade.symbol} ${trade.side} for ${formatCurrency(tradePnl(trade))}.`);
+      await persistCreate("trades", trade, api.createTrade);
+      return;
+    }
+
     const symbol = String(form.get("symbol") ?? "").trim().toUpperCase();
     const entryPrice = Number(form.get("entryPrice"));
     const exitPrice = Number(form.get("exitPrice"));
     const quantity = Number(form.get("quantity"));
-    if (!symbol || !entryPrice || !exitPrice || !quantity) return;
+    if (!symbol || !entryPrice || !exitPrice || !quantity) {
+      setQuickTradeMessage("Use the quick line or fill symbol, entry, exit, and quantity.");
+      return;
+    }
 
     const trade: TradeEntry = {
       id: newId(),
@@ -752,11 +935,22 @@ export function WorkspaceApp() {
       createdAt: new Date().toISOString()
     };
 
-    setState((current) => ({ ...current, trades: [trade, ...current.trades] }));
-    event.currentTarget.reset();
+    formEl.reset();
+    setQuickTradeText("");
+    setQuickTradeMessage(`Logged ${trade.symbol} ${trade.side} for ${formatCurrency(tradePnl(trade))}.`);
+    await persistCreate("trades", trade, api.createTrade);
   }
 
-  function removeItem(collection: keyof WorkspaceState, id: string) {
+  async function removeItem(collection: keyof WorkspaceState, id: string) {
+    if (apiOnline) {
+      try {
+        if (collection === "trades") await api.deleteTrade(id);
+        else if (collection === "journal") await api.deleteJournal(id);
+        else await api.deleteDocument(id);
+      } catch {
+        setApiOnline(false);
+      }
+    }
     setState((current) => ({
       ...current,
       [collection]: current[collection].filter((item) => item.id !== id)
@@ -1111,9 +1305,31 @@ export function WorkspaceApp() {
                   <Activity aria-hidden="true" className="text-signal" size={20} strokeWidth={2.1} />
                 </div>
                 <div className="mt-4 grid gap-3">
+                  <div className="rounded-lg border border-signal/20 bg-signal/5 p-3">
+                    <Field label="Quick trade">
+                      <textarea
+                        className={`${textareaClass()} min-h-24`}
+                        name="quickTrade"
+                        onChange={(event) => setQuickTradeText(event.target.value)}
+                        placeholder="AAPL long 100 -> 110 x10 strategy VWAP setup ORB notes clean reclaim"
+                        value={quickTradeText}
+                      />
+                    </Field>
+                    <div className="mt-3 rounded-md border border-line bg-card/75 px-3 py-2 text-sm text-ink/64">
+                      {quickTradePreview ? (
+                        <span>
+                          {quickTradePreview.symbol} / {quickTradePreview.side} /{" "}
+                          {formatCurrency(tradePnl({ id: "preview", createdAt: "", ...quickTradePreview }))} /{" "}
+                          {quickTradePreview.strategy || "no strategy"}
+                        </span>
+                      ) : (
+                        <span>{quickTradeMessage}</span>
+                      )}
+                    </div>
+                  </div>
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Symbol">
-                      <input className={textInputClass()} name="symbol" required />
+                      <input className={textInputClass()} name="symbol" />
                     </Field>
                     <Field label="Side">
                       <select className={textInputClass()} name="side">
@@ -1132,25 +1348,35 @@ export function WorkspaceApp() {
                   </Field>
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Entry">
-                      <input className={textInputClass()} name="entryPrice" required step="0.01" type="number" />
+                      <input className={textInputClass()} name="entryPrice" step="0.01" type="number" />
                     </Field>
                     <Field label="Exit">
-                      <input className={textInputClass()} name="exitPrice" required step="0.01" type="number" />
+                      <input className={textInputClass()} name="exitPrice" step="0.01" type="number" />
                     </Field>
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Qty">
-                      <input className={textInputClass()} name="quantity" required step="0.01" type="number" />
+                      <input className={textInputClass()} name="quantity" step="0.01" type="number" />
                     </Field>
                     <Field label="Fees">
                       <input className={textInputClass()} name="fees" step="0.01" type="number" />
                     </Field>
                   </div>
                   <Field label="Strategy">
-                    <input className={textInputClass()} name="strategy" placeholder="VWAP Pullback" />
+                    <input className={textInputClass()} list="strategy-suggestions" name="strategy" placeholder="VWAP Pullback" />
+                    <datalist id="strategy-suggestions">
+                      {strategySuggestions.map((strategy) => (
+                        <option key={strategy} value={strategy} />
+                      ))}
+                    </datalist>
                   </Field>
                   <Field label="Setup">
-                    <input className={textInputClass()} name="setup" placeholder="Reclaim, ORB, fade" />
+                    <input className={textInputClass()} list="setup-suggestions" name="setup" placeholder="Reclaim, ORB, fade" />
+                    <datalist id="setup-suggestions">
+                      {setupSuggestions.map((setup) => (
+                        <option key={setup} value={setup} />
+                      ))}
+                    </datalist>
                   </Field>
                   <Field label="State">
                     <select className={textInputClass()} name="emotion">
@@ -1245,7 +1471,7 @@ export function WorkspaceApp() {
                   <div>
                     <h2 className="text-base font-semibold text-ink">Trading Insights</h2>
                     <p className="mt-1 text-sm text-ink/58">
-                      {state.trades.length} trades, {strategyStats.length} strategies
+                      {state.trades.length} trades, {sourceStrategySignals.length} source signals
                     </p>
                   </div>
                   <BrainCircuit aria-hidden="true" className="text-signal" size={21} strokeWidth={2.1} />
@@ -1262,7 +1488,7 @@ export function WorkspaceApp() {
                 <div className="flex items-center justify-between border-b border-line px-4 py-3">
                   <div>
                     <h2 className="text-base font-semibold text-ink">Strategy Scoreboard</h2>
-                    <p className="mt-1 text-sm text-ink/58">ranked by realized P&L</p>
+                    <p className="mt-1 text-sm text-ink/58">trade validation plus source evidence</p>
                   </div>
                   <ShieldCheck aria-hidden="true" className="text-moss" size={20} strokeWidth={2.1} />
                 </div>
@@ -1273,7 +1499,7 @@ export function WorkspaceApp() {
                         <div>
                           <h3 className="text-sm font-semibold text-ink">{stat.name}</h3>
                           <p className="mt-1 text-xs font-medium text-ink/52">
-                            {stat.count} trades / {stat.winRate}% win rate
+                            {stat.count} trades / {stat.sourceCount} sources / {stat.winRate}% win rate
                           </p>
                         </div>
                         <span
@@ -1287,12 +1513,24 @@ export function WorkspaceApp() {
                       </div>
                       <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
                         <SnapshotRow label="Avg" value={formatCurrency(stat.avgPnl)} />
-                        <SnapshotRow label="Best" value={formatCurrency(tradePnl(stat.bestTrade))} />
-                        <SnapshotRow label="Worst" value={formatCurrency(tradePnl(stat.worstTrade))} />
+                        <SnapshotRow label="Best" value={stat.bestTrade ? formatCurrency(tradePnl(stat.bestTrade)) : "research"} />
+                        <SnapshotRow label="Worst" value={stat.worstTrade ? formatCurrency(tradePnl(stat.worstTrade)) : "research"} />
                       </div>
+                      {stat.researchSummary && (
+                        <p className="mt-4 text-sm leading-6 text-ink/64">{stat.researchSummary}</p>
+                      )}
+                      {stat.researchRules.length > 0 && (
+                        <div className="mt-3 grid gap-1 text-sm text-ink/62">
+                          {stat.researchRules.slice(0, 3).map((rule) => (
+                            <p key={rule}>{rule}</p>
+                          ))}
+                        </div>
+                      )}
                       <div className="mt-4 flex flex-wrap gap-2">
+                        <Badge variant="secondary">{stat.validationState}</Badge>
                         {stat.symbols.slice(0, 4).map(tagChip)}
                         {stat.setups.slice(0, 3).map(tagChip)}
+                        {stat.sourceTitles.slice(0, 2).map(tagChip)}
                       </div>
                     </article>
                   ))}
@@ -1321,17 +1559,65 @@ export function WorkspaceApp() {
                       {graph.nodes.length} nodes / {graph.edges.length} edges
                     </p>
                   </div>
-                  <GitBranch aria-hidden="true" className="text-signal" size={21} strokeWidth={2.1} />
+                  <div className="flex items-center gap-2">
+                    <button
+                      className="grid h-9 w-9 place-items-center rounded-md border border-line bg-card text-ink/70 transition hover:bg-paper"
+                      onClick={() => zoomGraph(0.18)}
+                      title="Zoom in"
+                      type="button"
+                    >
+                      <ZoomIn aria-hidden="true" size={17} />
+                    </button>
+                    <button
+                      className="grid h-9 w-9 place-items-center rounded-md border border-line bg-card text-ink/70 transition hover:bg-paper"
+                      onClick={() => zoomGraph(-0.18)}
+                      title="Zoom out"
+                      type="button"
+                    >
+                      <ZoomOut aria-hidden="true" size={17} />
+                    </button>
+                    <button
+                      className="grid h-9 w-9 place-items-center rounded-md border border-line bg-card text-ink/70 transition hover:bg-paper"
+                      onClick={() => selectedGraphNode && focusGraphNode(selectedGraphNode)}
+                      title="Focus selected node"
+                      type="button"
+                    >
+                      <Crosshair aria-hidden="true" size={17} />
+                    </button>
+                    <button
+                      className="grid h-9 w-9 place-items-center rounded-md border border-line bg-card text-ink/70 transition hover:bg-paper"
+                      onClick={resetGraphView}
+                      title="Recenter"
+                      type="button"
+                    >
+                      <GitBranch aria-hidden="true" size={17} />
+                    </button>
+                  </div>
                 </div>
 
                 <div className="mt-5 overflow-hidden rounded-lg border border-ink/10 bg-[#171a1d]">
                   <svg
                     aria-label="Trading relationship map"
-                    className="h-[520px] w-full"
+                    className="h-[520px] w-full cursor-grab touch-none active:cursor-grabbing"
+                    onPointerDown={(event) => {
+                      if ((event.target as Element).closest("[data-graph-node='true']")) return;
+                      setGraphDrag({
+                        startX: event.clientX,
+                        startY: event.clientY,
+                        startView: graphView
+                      });
+                    }}
+                    onPointerLeave={() => setGraphDrag(null)}
+                    onPointerMove={panGraph}
+                    onPointerUp={() => setGraphDrag(null)}
+                    onWheel={(event) => {
+                      event.preventDefault();
+                      zoomGraph(event.deltaY > 0 ? -0.12 : 0.12);
+                    }}
                     role="img"
-                    viewBox="0 0 920 560"
+                    viewBox={graphViewBox}
                   >
-                    <rect fill="#171a1d" height="560" width="920" x="0" y="0" />
+                    <rect fill="#171a1d" height="3000" width="3000" x="-1040" y="-1220" />
                     {graph.edges.map((edge) => {
                       const from = graphNodeLookup.get(edge.from);
                       const to = graphNodeLookup.get(edge.to);
@@ -1357,12 +1643,13 @@ export function WorkspaceApp() {
                       return (
                         <g
                           className="cursor-pointer outline-none"
+                          data-graph-node="true"
                           key={node.id}
-                          onClick={() => setSelectedGraphNodeId(node.id)}
+                          onClick={() => selectGraphNode(node.id, true)}
                           onKeyDown={(event) => {
                             if (event.key === "Enter" || event.key === " ") {
                               event.preventDefault();
-                              setSelectedGraphNodeId(node.id);
+                              selectGraphNode(node.id, true);
                             }
                           }}
                           role="button"
@@ -1430,7 +1717,7 @@ export function WorkspaceApp() {
                         <button
                           className="flex min-h-10 items-center justify-between gap-3 rounded-md border border-line bg-card px-3 text-left text-sm transition hover:bg-paper"
                           key={edge.id}
-                          onClick={() => other && setSelectedGraphNodeId(other.id)}
+                          onClick={() => other && selectGraphNode(other.id, true)}
                           type="button"
                         >
                           <span className="font-medium text-ink">{other?.label ?? "Unknown"}</span>
@@ -1467,6 +1754,28 @@ export function WorkspaceApp() {
                 Import JSON
                 <input accept="application/json" className="hidden" onChange={importWorkspace} type="file" />
               </label>
+            </div>
+          </section>
+
+          <section className="rounded-lg border border-line bg-card/86 p-4 shadow-panel">
+            <div className="flex items-center justify-between">
+              <h2 className="text-base font-semibold text-ink">AI Router</h2>
+              <Sparkles aria-hidden="true" className="text-caution" size={20} strokeWidth={2.1} />
+            </div>
+            <div className="mt-4 space-y-3 text-sm">
+              <SnapshotRow label="Mode" value={aiRouterStatus?.mode ?? (apiOnline ? "unknown" : "offline")} />
+              <SnapshotRow
+                label="Active"
+                value={aiRouterStatus?.active_provider_id ?? (aiRouterStatus?.mode === "auto" ? "none" : "local rules")}
+              />
+              <div className="flex flex-wrap gap-2">
+                {aiRouterStatus?.providers.map((provider) => (
+                  <Badge key={provider.id} variant={provider.configured ? "default" : "secondary"}>
+                    {provider.label}
+                  </Badge>
+                ))}
+                {!aiRouterStatus?.providers.length && <Badge variant="secondary">local semantic rules</Badge>}
+              </div>
             </div>
           </section>
 
@@ -1570,43 +1879,131 @@ function SnapshotRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function buildStrategyStats(trades: TradeEntry[]): StrategyStat[] {
-  const groups = trades.reduce<Record<string, TradeEntry[]>>((acc, trade) => {
+function comparableLabel(value: string) {
+  const aliases: Record<string, string> = {
+    orb: "opening range breakout",
+    "opening range": "opening range breakout",
+    vwap: "vwap"
+  };
+  const normalized = value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  return aliases[normalized] ?? normalized;
+}
+
+function labelsOverlap(left: string, right: string) {
+  const a = comparableLabel(left);
+  const b = comparableLabel(right);
+  if (!a || !b) return false;
+  return a === b || a.includes(b) || b.includes(a);
+}
+
+function buildSourceStrategySignals(vault: VaultItem[], trades: TradeEntry[]): SourceStrategySignal[] {
+  const tradeStrategies = Array.from(
+    new Set(trades.map((trade) => trade.strategy.trim()).filter(Boolean))
+  );
+  const tradeSetups = Array.from(new Set(trades.map((trade) => trade.setup.trim()).filter(Boolean)));
+
+  return vault
+    .filter((item) => {
+      const tags = [...item.tags, ...(item.aiTags ?? [])].join(" ").toLowerCase();
+      return Boolean(item.strategyInfo) || item.kind === "strategy" || tags.includes("strategy");
+    })
+    .map((item) => {
+      const info = item.strategyInfo;
+      const matchedStrategy =
+        tradeStrategies.find((strategy) => labelsOverlap(strategy, info?.name ?? item.title)) ??
+        tradeStrategies.find((strategy) => labelsOverlap(strategy, info?.setup ?? "")) ??
+        tradeStrategies.find((strategy) =>
+          item.tags.some((tag) => labelsOverlap(strategy, tag))
+        );
+      const matchedSetup =
+        tradeSetups.find((setup) => labelsOverlap(setup, info?.setup ?? "")) ??
+        tradeSetups.find((setup) => item.tags.some((tag) => labelsOverlap(setup, tag)));
+      const strategyName = matchedStrategy ?? info?.name ?? matchedSetup ?? item.title;
+      const rules = [
+        ...(info?.entry_rules ?? []),
+        ...(info?.exit_rules ?? []),
+        ...(info?.risk_rules ?? [])
+      ];
+      const attributes = uniqueTags([
+        info?.market,
+        info?.timeframe,
+        ...(info?.indicators ?? []),
+        ...(matchedSetup ? [matchedSetup] : [])
+      ]);
+
+      return {
+        sourceId: item.id,
+        sourceTitle: item.title,
+        strategyName,
+        setup: info?.setup ?? matchedSetup,
+        summary: info?.summary,
+        confidence: info?.confidence ?? 0.4,
+        tags: uniqueTags([...item.tags, ...(item.aiTags ?? [])]),
+        rules,
+        attributes
+      };
+    });
+}
+
+function buildStrategyStats(state: WorkspaceState, sourceSignals: SourceStrategySignal[]): StrategyStat[] {
+  const groups = state.trades.reduce<Record<string, TradeEntry[]>>((acc, trade) => {
     const key = trade.strategy.trim() || "Untitled strategy";
     acc[key] = [...(acc[key] ?? []), trade];
     return acc;
   }, {});
+  const names = new Set([
+    ...Object.keys(groups),
+    ...sourceSignals.map((signal) => signal.strategyName.trim()).filter(Boolean)
+  ]);
 
-  return Object.entries(groups)
-    .map(([name, group]) => {
+  return Array.from(names)
+    .map((name) => {
+      const group = groups[name] ?? [];
+      const relatedSignals = sourceSignals.filter((signal) => labelsOverlap(signal.strategyName, name));
       const sorted = [...group].sort((a, b) => tradePnl(b) - tradePnl(a));
       const bestTrade = sorted[0];
       const worstTrade = sorted[sorted.length - 1];
-      if (!bestTrade || !worstTrade) return null;
-
       const pnls = group.map(tradePnl);
       const totalPnl = pnls.reduce((sum, pnl) => sum + pnl, 0);
       const wins = pnls.filter((pnl) => pnl > 0).length;
       const losses = pnls.filter((pnl) => pnl < 0).length;
       const symbols = Array.from(new Set(group.map((trade) => trade.symbol).filter(Boolean)));
-      const setups = Array.from(new Set(group.map((trade) => trade.setup).filter(Boolean)));
+      const setups = uniqueTags([
+        ...group.map((trade) => trade.setup),
+        ...relatedSignals.map((signal) => signal.setup ?? "")
+      ]);
+      const researchRules = uniqueTags(relatedSignals.flatMap((signal) => signal.rules)).slice(0, 6);
+      const researchConfidence = relatedSignals.length
+        ? relatedSignals.reduce((sum, signal) => sum + signal.confidence, 0) / relatedSignals.length
+        : 0;
+      const validationState: StrategyStat["validationState"] =
+        group.length && relatedSignals.length ? "mixed" : group.length ? "live" : "research";
 
       return {
         name,
         count: group.length,
         wins,
         losses,
-        winRate: Math.round((wins / group.length) * 100),
+        winRate: group.length ? Math.round((wins / group.length) * 100) : 0,
         totalPnl,
-        avgPnl: totalPnl / group.length,
+        avgPnl: group.length ? totalPnl / group.length : 0,
         symbols,
         setups,
         bestTrade,
-        worstTrade
+        worstTrade,
+        sourceCount: relatedSignals.length,
+        sourceTitles: relatedSignals.map((signal) => signal.sourceTitle),
+        researchConfidence,
+        researchSummary: relatedSignals.find((signal) => signal.summary)?.summary ?? undefined,
+        researchRules,
+        validationState
       };
     })
-    .filter((stat): stat is StrategyStat => Boolean(stat))
-    .sort((a, b) => b.totalPnl - a.totalPnl);
+    .sort((a, b) => {
+      if (a.count && !b.count) return -1;
+      if (!a.count && b.count) return 1;
+      return b.totalPnl - a.totalPnl || b.researchConfidence - a.researchConfidence;
+    });
 }
 
 function buildLabelStats(trades: TradeEntry[], labelFor: (trade: TradeEntry) => string): LabelStat[] {
@@ -1634,9 +2031,14 @@ function buildLabelStats(trades: TradeEntry[], labelFor: (trade: TradeEntry) => 
     .sort((a, b) => b.totalPnl - a.totalPnl);
 }
 
-function buildTradingInsights(state: WorkspaceState, strategyStats: StrategyStat[]): TradingInsight[] {
+function buildTradingInsights(
+  state: WorkspaceState,
+  strategyStats: StrategyStat[],
+  sourceSignals: SourceStrategySignal[],
+  aiRouterStatus: AiRouterStatus | null
+): TradingInsight[] {
   if (!state.trades.length) {
-    const strategySources = state.vault.filter((item) => item.strategyInfo);
+    const strategySources = sourceSignals.length;
 
     return [
       {
@@ -1647,11 +2049,20 @@ function buildTradingInsights(state: WorkspaceState, strategyStats: StrategyStat
       },
       {
         title: "Strategy Research",
-        value: `${strategySources.length} sources`,
-        detail: strategySources.length
+        value: `${strategySources} sources`,
+        detail: strategySources
           ? "Generated strategy fields are ready in the vault and map."
           : "Upload strategy notes or links to generate setup, entry, exit, and risk fields.",
-        tone: strategySources.length ? "good" : "neutral"
+        tone: strategySources ? "good" : "neutral"
+      },
+      {
+        title: "AI Router",
+        value: aiRouterStatus?.mode ?? "offline",
+        detail:
+          aiRouterStatus?.active_provider_id
+            ? `Cloud extraction is routed through ${aiRouterStatus.active_provider_id}.`
+            : "Local semantic extraction is active until an opt-in provider key is configured.",
+        tone: aiRouterStatus?.active_provider_id ? "good" : "neutral"
       },
       {
         title: "Vault Coverage",
@@ -1674,7 +2085,10 @@ function buildTradingInsights(state: WorkspaceState, strategyStats: StrategyStat
   const routineDates = new Set(state.journal.filter((entry) => entry.routineDone).map((entry) => entry.date));
   const routineTrades = state.trades.filter((trade) => routineDates.has(trade.entryDate));
   const nonRoutineTrades = state.trades.filter((trade) => !routineDates.has(trade.entryDate));
-  const strategySources = state.vault.filter((item) => item.strategyInfo);
+  const sourceBackedStrategies = strategyStats.filter((stat) => stat.sourceCount > 0);
+  const unvalidatedResearch = strategyStats.filter(
+    (stat) => stat.validationState === "research" && stat.sourceCount > 0
+  );
   const insights: TradingInsight[] = [
     {
       title: "Net Edge",
@@ -1684,13 +2098,13 @@ function buildTradingInsights(state: WorkspaceState, strategyStats: StrategyStat
     }
   ];
 
-  if (strategySources.length) {
-    const generatedTagCount = strategySources.reduce((sum, item) => sum + (item.aiTags?.length ?? 0), 0);
+  if (sourceBackedStrategies.length) {
+    const validatedCount = sourceBackedStrategies.filter((stat) => stat.count > 0).length;
     insights.push({
       title: "Strategy Research",
-      value: `${strategySources.length} sources`,
-      detail: `${generatedTagCount} generated tags connected to the map.`,
-      tone: "good"
+      value: `${sourceBackedStrategies.length} linked`,
+      detail: `${validatedCount} source-backed strategies have trade validation; ${unvalidatedResearch.length} still need a sample.`,
+      tone: unvalidatedResearch.length ? "warn" : "good"
     });
   }
 
@@ -1698,8 +2112,20 @@ function buildTradingInsights(state: WorkspaceState, strategyStats: StrategyStat
     insights.push({
       title: "Best Strategy",
       value: bestStrategy.name,
-      detail: `${formatCurrency(bestStrategy.totalPnl)} across ${bestStrategy.count} trades; ${bestStrategy.winRate}% win rate.`,
+      detail: `${formatCurrency(bestStrategy.totalPnl)} across ${bestStrategy.count} trades; ${bestStrategy.sourceCount} sources attached.`,
       tone: bestStrategy.totalPnl >= 0 ? "good" : "warn"
+    });
+  }
+
+  if (unvalidatedResearch[0]) {
+    const candidate = unvalidatedResearch[0];
+    insights.push({
+      title: "Next Validation",
+      value: candidate.name,
+      detail:
+        candidate.researchRules[0] ??
+        `${candidate.sourceCount} source(s) define this strategy, but no closed trades are logged yet.`,
+      tone: "warn"
     });
   }
 
@@ -1749,6 +2175,16 @@ function buildTradingInsights(state: WorkspaceState, strategyStats: StrategyStat
     });
   }
 
+  insights.push({
+    title: "AI Router",
+    value: aiRouterStatus?.mode ?? "offline",
+    detail:
+      aiRouterStatus?.active_provider_id
+        ? `Provider order is active; current route starts with ${aiRouterStatus.active_provider_id}.`
+        : "Cloud AI is opt-in. The app is using deterministic local extraction right now.",
+    tone: aiRouterStatus?.active_provider_id ? "good" : "neutral"
+  });
+
   return insights.slice(0, 6);
 }
 
@@ -1757,7 +2193,62 @@ function averagePnl(trades: TradeEntry[]) {
   return trades.reduce((sum, trade) => sum + tradePnl(trade), 0) / trades.length;
 }
 
-function buildGraphModel(state: WorkspaceState): GraphModel {
+function parseQuickTrade(raw: string): QuickTradeDraft | null {
+  const text = raw.trim();
+  if (!text) return null;
+  const date = text.match(/\b\d{4}-\d{2}-\d{2}\b/)?.[0] ?? new Date().toISOString().slice(0, 10);
+  const textWithoutDate = text.replace(date, " ");
+  const symbol = textWithoutDate.match(/\b[A-Z][A-Z0-9./-]{0,9}\b/i)?.[0]?.toUpperCase();
+  const side: TradeEntry["side"] = /\b(short|sell|sold|s)\b/i.test(text) ? "short" : "long";
+  const feesMatch = text.match(/\b(?:fee|fees|commission)[:=\s]+(\d+(?:\.\d+)?)/i);
+  const entryMatch = text.match(/\b(?:entry|in|buy|short|long)[:=@\s]+(\d+(?:\.\d+)?)/i);
+  const exitMatch = text.match(/\b(?:exit|out|sell|cover|target)[:=@\s]+(\d+(?:\.\d+)?)/i);
+  const qtyMatch = text.match(/\b(?:qty|quantity|shares|contracts|size|x)[:=\s]*(\d+(?:\.\d+)?)/i);
+  const numericText = textWithoutDate
+    .replace(/\b(?:fee|fees|commission)[:=\s]+\d+(?:\.\d+)?/gi, " ")
+    .replace(/[,$]/g, " ")
+    .replace(/->|@|x/gi, " ");
+  const numbers = (numericText.match(/\b\d+(?:\.\d+)?\b/g) ?? []).map(Number);
+  const entryPrice = Number(entryMatch?.[1] ?? numbers[0]);
+  const exitPrice = Number(exitMatch?.[1] ?? numbers[1]);
+  const quantity = Number(qtyMatch?.[1] ?? numbers[2]);
+  const fees = Number(feesMatch?.[1] ?? 0);
+  const strategy = labeledValue(text, ["strategy", "strat", "system"]);
+  const setup = labeledValue(text, ["setup", "playbook", "pattern"]);
+  const emotion = labeledValue(text, ["state", "emotion", "mood"]) || "focused";
+  const notes = labeledValue(text, ["notes", "note", "why"]) || text;
+
+  if (!symbol || !entryPrice || !exitPrice || !quantity) return null;
+
+  return {
+    symbol,
+    side,
+    entryDate: date,
+    entryPrice,
+    exitPrice,
+    quantity,
+    fees,
+    strategy,
+    setup,
+    emotion: emotion.toLowerCase(),
+    notes
+  };
+}
+
+function labeledValue(text: string, labels: string[]) {
+  const labelPattern = labels.join("|");
+  const stopWords = "strategy|strat|system|setup|playbook|pattern|state|emotion|mood|notes|note|why|fee|fees|commission";
+  const match = text.match(
+    new RegExp(`\\b(?:${labelPattern})[:=\\s]+(.+?)(?=\\s+(?:${stopWords})[:=\\s]+|$)`, "i")
+  );
+  return match?.[1]?.trim().replace(/[.;|]+$/, "") ?? "";
+}
+
+function buildGraphModel(
+  state: WorkspaceState,
+  sourceSignals: SourceStrategySignal[],
+  strategyStats: StrategyStat[]
+): GraphModel {
   const nodes = new Map<string, GraphNode>();
   const edgeIds = new Set<string>();
   const edges: GraphEdge[] = [];
@@ -1771,13 +2262,15 @@ function buildGraphModel(state: WorkspaceState): GraphModel {
     weight: Math.max(1, state.trades.length + state.journal.length + state.vault.length)
   });
 
-  buildStrategyStats(state.trades).forEach((stat) => {
+  strategyStats.forEach((stat) => {
     addGraphNode(nodes, {
       id: graphId("strategy", stat.name),
       label: stat.name,
       type: "strategy",
-      detail: `${formatCurrency(stat.totalPnl)} across ${stat.count} trades; ${stat.winRate}% win rate.`,
-      weight: stat.count,
+      detail:
+        `${formatCurrency(stat.totalPnl)} across ${stat.count} trades; ` +
+        `${stat.sourceCount} source(s), ${stat.winRate}% win rate.`,
+      weight: Math.max(1, stat.count + stat.sourceCount),
       pnl: stat.totalPnl
     });
     addGraphEdge(edges, edgeIds, memoryId, graphId("strategy", stat.name), "strategy");
@@ -1883,6 +2376,7 @@ function buildGraphModel(state: WorkspaceState): GraphModel {
   state.vault.forEach((item) => {
     const sourceId = `source:${item.id}`;
     const strategyInfo = item.strategyInfo;
+    const sourceSignal = sourceSignals.find((signal) => signal.sourceId === item.id);
     addGraphNode(nodes, {
       id: sourceId,
       label: item.title,
@@ -1897,22 +2391,23 @@ function buildGraphModel(state: WorkspaceState): GraphModel {
       item.kind === "strategy" ||
       item.tags.some((tag) => tag.toLowerCase().includes("strategy"))
     ) {
-      const strategyName = strategyInfo?.name || item.title;
+      const strategyName = sourceSignal?.strategyName || strategyInfo?.name || item.title;
       const strategyId = graphId("strategy", strategyName);
       addGraphNode(nodes, {
         id: strategyId,
         label: strategyName,
         type: "strategy",
         detail: strategyInfo?.summary || "Strategy research captured in the vault.",
-        weight: 1
+        weight: Math.max(1, sourceSignal?.confidence ? sourceSignal.confidence * 2 : 1)
       });
       addGraphEdge(edges, edgeIds, sourceId, strategyId, strategyInfo ? "strategy info" : "strategy note");
 
-      if (strategyInfo?.setup) {
-        const setupId = graphId("setup", strategyInfo.setup);
+      if (sourceSignal?.setup || strategyInfo?.setup) {
+        const setup = sourceSignal?.setup || strategyInfo?.setup || "";
+        const setupId = graphId("setup", setup);
         addGraphNode(nodes, {
           id: setupId,
-          label: strategyInfo.setup,
+          label: setup,
           type: "setup",
           detail: "Generated setup from imported strategy information.",
           weight: 1
@@ -1920,7 +2415,12 @@ function buildGraphModel(state: WorkspaceState): GraphModel {
         addGraphEdge(edges, edgeIds, strategyId, setupId, "setup");
       }
 
-      [strategyInfo?.market, strategyInfo?.timeframe, ...(strategyInfo?.indicators ?? [])]
+      [
+        ...(sourceSignal?.attributes ?? []),
+        strategyInfo?.market,
+        strategyInfo?.timeframe,
+        ...(strategyInfo?.indicators ?? [])
+      ]
         .filter((tag): tag is string => Boolean(tag))
         .forEach((tag) => {
           const tagId = graphId("tag", tag);
@@ -2072,7 +2572,7 @@ function worstTradeLabel(trades: TradeEntry[]) {
 }
 
 function topStrategyLabel(trades: TradeEntry[]) {
-  const topStrategy = buildStrategyStats(trades)[0];
+  const topStrategy = buildStrategyStats({ vault: [], journal: [], trades }, [])[0];
   if (!topStrategy) return "-";
   return `${topStrategy.name} ${formatCurrency(topStrategy.totalPnl)}`;
 }
