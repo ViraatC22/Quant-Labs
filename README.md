@@ -9,6 +9,12 @@ intelligence operating system: a vault, trade journal, knowledge graph, and
 paper-trading research lab that treats TradingView and broker/data APIs as
 adapters around the core memory system.
 
+## Documentation
+
+Start with [`docs/README.md`](docs/README.md) for the full documentation hub,
+including architecture, setup requests, environment variables, UI-system notes,
+repository map, and imported product planning files.
+
 ## Local Development
 
 ```bash
