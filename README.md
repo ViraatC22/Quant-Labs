@@ -63,8 +63,9 @@ Current app functionality:
   when useful, and log the AI evaluation into the journal.
 - Generate an optimal knowledge-base strategy card with an included/excluded
   rationale dropdown and a trade-draft handoff.
-- Generate a recommended routine from extracted strategy rules, including how
-  to trade, what setup to look for, when to execute, and risk/review steps.
+- Use a dedicated Routine tab that turns extracted strategy rules into a
+  recommended routine, how-to-trade plan, setup criteria, execution timing, and
+  risk/review steps.
 - Blend imported source insights into the current strategy scoreboard so new
   sources create research candidates and influence existing strategy nodes.
 - Move through the Strategy Atlas with spaced source, strategy, setup, trade,

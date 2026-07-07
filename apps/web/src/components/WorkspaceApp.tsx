@@ -42,7 +42,7 @@ import type {
   WorkspaceState
 } from "@/lib/types";
 
-type TabKey = "vault" | "journal" | "trades" | "insights" | "graph";
+type TabKey = "vault" | "journal" | "trades" | "routine" | "insights" | "graph";
 
 type ImportedVaultItem = {
   title: string;
@@ -200,6 +200,7 @@ const tabs: Array<{ key: TabKey; label: string; icon: typeof BookMarked }> = [
   { key: "vault", label: "Vault", icon: BookMarked },
   { key: "journal", label: "Journal", icon: CalendarCheck },
   { key: "trades", label: "Trades", icon: LineChart },
+  { key: "routine", label: "Routine", icon: CalendarCheck },
   { key: "insights", label: "Insights", icon: BrainCircuit },
   { key: "graph", label: "Atlas", icon: GitBranch }
 ];
@@ -1052,6 +1053,20 @@ export function WorkspaceApp() {
         tradeRecommendations
       ),
     [optimalStrategy, sourceStrategySignals, strategyStats, tradeRecommendations, viewState]
+  );
+  const routineSignals = useMemo(() => {
+    const related = sourceStrategySignals.filter(
+      (signal) =>
+        labelsOverlap(signal.strategyName, recommendedRoutine.strategyName) ||
+        labelsOverlap(signal.setup ?? "", recommendedRoutine.setupFocus)
+    );
+    return (related.length ? related : sourceStrategySignals).slice(0, 5);
+  }, [recommendedRoutine, sourceStrategySignals]);
+  const routineStrategyStat = useMemo(
+    () =>
+      strategyStats.find((stat) => labelsOverlap(stat.name, recommendedRoutine.strategyName)) ??
+      strategyStats[0],
+    [recommendedRoutine.strategyName, strategyStats]
   );
   const graph = useMemo(
     () => buildGraphModel(viewState, sourceStrategySignals, strategyStats),
@@ -2310,6 +2325,95 @@ export function WorkspaceApp() {
             </section>
           )}
 
+          {activeTab === "routine" && (
+            <section
+              aria-labelledby="routine-tab"
+              className="grid gap-4 xl:grid-cols-[1fr_360px]"
+              id="routine-panel"
+              role="tabpanel"
+            >
+              <RoutinePlaybookCard routine={recommendedRoutine} variant="full" />
+
+              <div className="grid gap-4">
+                <section className="rounded-lg border border-line bg-card/86 p-4 shadow-panel">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <h2 className="text-base font-semibold text-ink">Source Evidence</h2>
+                      <p className="mt-1 text-sm text-ink/58">
+                        Extracted rules supporting the current routine
+                      </p>
+                    </div>
+                    <BookMarked aria-hidden="true" className="text-signal" size={20} strokeWidth={2.1} />
+                  </div>
+                  <div className="mt-4 divide-y divide-line border-y border-line">
+                    {routineSignals.map((signal) => (
+                      <article className="py-3" key={`${signal.sourceId}-${signal.strategyName}`}>
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <h3 className="text-sm font-semibold text-ink">{signal.sourceTitle}</h3>
+                            <p className="mt-1 text-xs font-medium text-ink/52">
+                              {signal.strategyName} / {signal.setup ?? "setup pending"}
+                            </p>
+                          </div>
+                          <span className="text-xs font-semibold text-ink/48">
+                            {Math.round(signal.confidence * 100)}%
+                          </span>
+                        </div>
+                        {signal.summary && (
+                          <p className="mt-2 text-sm leading-6 text-ink/64">
+                            {compactText(signal.summary, 170)}
+                          </p>
+                        )}
+                        {signal.rules.length > 0 && (
+                          <div className="mt-2 grid gap-1 text-sm text-ink/62">
+                            {signal.rules.slice(0, 2).map((rule) => (
+                              <p key={rule}>{compactText(rule, 140)}</p>
+                            ))}
+                          </div>
+                        )}
+                      </article>
+                    ))}
+                    {!routineSignals.length && (
+                      <div className="py-4 text-sm font-medium text-ink/52">
+                        Add a strategy source to generate a source-backed routine.
+                      </div>
+                    )}
+                  </div>
+                </section>
+
+                <section className="rounded-lg border border-line bg-card/86 p-4 shadow-panel">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-base font-semibold text-ink">Readiness</h2>
+                    <ShieldCheck aria-hidden="true" className="text-moss" size={20} strokeWidth={2.1} />
+                  </div>
+                  <div className="mt-4 space-y-3 text-sm">
+                    <SnapshotRow label="Validation" value={recommendedRoutine.validationState} />
+                    <SnapshotRow label="Confidence" value={`${Math.round(recommendedRoutine.confidence * 100)}%`} />
+                    <SnapshotRow label="Sources" value={String(recommendedRoutine.sourceCount)} />
+                    <SnapshotRow
+                      label="Closed trades"
+                      value={String(routineStrategyStat?.count ?? 0)}
+                    />
+                    <SnapshotRow
+                      label="Routine days"
+                      value={String(viewState.journal.filter((entry) => entry.routineDone).length)}
+                    />
+                  </div>
+                  <div className="mt-4 grid gap-2">
+                    <Button onClick={() => setActiveTab("trades")} type="button">
+                      <Activity aria-hidden="true" size={17} strokeWidth={2.2} />
+                      Open paper ticket
+                    </Button>
+                    <Button onClick={() => setActiveTab("journal")} type="button" variant="outline">
+                      <CalendarCheck aria-hidden="true" size={17} strokeWidth={2.2} />
+                      Journal prep
+                    </Button>
+                  </div>
+                </section>
+              </div>
+            </section>
+          )}
+
           {activeTab === "insights" && (
             <section
               aria-labelledby="insights-tab"
@@ -2819,16 +2923,31 @@ function InsightCard({ insight }: { insight: TradingInsight }) {
   );
 }
 
-function RoutinePlaybookCard({ routine }: { routine: RecommendedRoutine }) {
+function RoutinePlaybookCard({
+  routine,
+  variant = "compact"
+}: {
+  routine: RecommendedRoutine;
+  variant?: "compact" | "full";
+}) {
+  const full = variant === "full";
+
   return (
-    <article className="mt-4 rounded-lg border border-signal/25 bg-signal/5 p-4">
+    <article
+      className={[
+        "rounded-lg border border-signal/25 bg-signal/5",
+        full ? "p-5 shadow-panel" : "mt-4 p-4"
+      ].join(" ")}
+    >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/48">
-            Recommended Routine
+            {full ? "Routine Playbook" : "Recommended Routine"}
           </p>
-          <h3 className="mt-2 text-base font-semibold text-ink">{routine.strategyName}</h3>
-          <p className="mt-1 text-sm text-ink/58">
+          <h3 className={["mt-2 font-semibold text-ink", full ? "text-xl" : "text-base"].join(" ")}>
+            {routine.strategyName}
+          </h3>
+          <p className="mt-1 text-sm leading-6 text-ink/58">
             {routine.setupFocus} / {routine.sourceCount} source{routine.sourceCount === 1 ? "" : "s"} /{" "}
             {Math.round(routine.confidence * 100)}% confidence
           </p>
@@ -2842,12 +2961,19 @@ function RoutinePlaybookCard({ routine }: { routine: RecommendedRoutine }) {
           {essentialTechnicalTags(routine.technicalTags, 7).map(tagChip)}
         </div>
       )}
-      <div className="mt-4 grid gap-3 lg:grid-cols-2">
+      <div className={["grid", full ? "mt-5 gap-5 lg:grid-cols-2" : "mt-4 gap-3 lg:grid-cols-2"].join(" ")}>
         {routine.blocks.map((block) => (
-          <section className="rounded-md border border-line bg-card/76 p-3" key={block.title}>
+          <section
+            className={[
+              "border-l-2 pl-3",
+              block.title === "When To Execute" ? "border-caution/60" : "border-signal/30",
+              block.title === "Risk And Review" && full ? "lg:col-span-2" : ""
+            ].join(" ")}
+            key={block.title}
+          >
             <h4 className="text-sm font-semibold text-ink">{block.title}</h4>
             <ul className="mt-2 grid gap-2 text-sm leading-6 text-ink/66">
-              {block.items.slice(0, 3).map((item) => (
+              {block.items.slice(0, full ? 4 : 3).map((item) => (
                 <li key={item}>{compactText(item, 150)}</li>
               ))}
             </ul>

@@ -82,6 +82,8 @@ Follow-up: 2026-07-07
 - Added a recommended routine card that derives how to trade, what setup to
   look for, when to execute, and risk/review steps from extracted strategy
   rules and the current knowledge base.
+- Promoted the routine card into a dedicated Routine tab with source evidence,
+  readiness metrics, and quick jumps to the paper ticket and journal prep.
 - Updated README and environment docs.
 
 ## Verification
@@ -159,6 +161,15 @@ Both passed. Local server check confirmed `http://localhost:3000/` returns 200
 and serves the renamed `Atlas` tab.
 
 Re-run on 2026-07-07 after atlas visual cleanup:
+
+```bash
+npm --prefix apps/web run typecheck
+npm --prefix apps/web run lint
+```
+
+Both passed. Local server check confirmed `http://localhost:3000/` returns 200.
+
+Re-run on 2026-07-07 after dedicated Routine tab work:
 
 ```bash
 npm --prefix apps/web run typecheck
