@@ -21,7 +21,7 @@ import {
   ZoomIn,
   ZoomOut
 } from "lucide-react";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { MetricTile } from "@/components/MetricTile";
 import { Button } from "@/components/ui/button";
@@ -190,6 +190,7 @@ const semanticTagRules = [
   ["opening range breakout", "orb"],
   ["mean reversion", "mean-reversion"],
   ["trend following", "trend-following"],
+  ["risk parity", "risk-parity"],
   ["vwap pullback", "vwap-pullback"],
   ["stop loss", "stop-loss"],
   ["take profit", "take-profit"],
@@ -239,6 +240,7 @@ const setupRules = [
   ["pullback", "Pullback continuation"],
   ["mean reversion", "Mean reversion"],
   ["trend following", "Trend following"],
+  ["risk parity", "Risk parity"],
   ["breakout", "Breakout continuation"],
   ["breakdown", "Breakdown continuation"],
   ["reversal", "Reversal"]
@@ -298,6 +300,14 @@ const technicalRules: Record<string, Array<readonly [RegExp, string, string]>> =
     [/\bfair value gap\b|\bfvg\b/i, "Fair value gap", "fair-value-gap"],
     [/\bimbalance\b/i, "Imbalance", "imbalance"],
     [/\bsupply\b|\bdemand\b/i, "Supply demand", "supply-demand"]
+  ],
+  setups: [
+    [/\bopening range breakout\b|\borb\b/i, "Opening range breakout", "opening-range-breakout"],
+    [/\bvwap pullback\b/i, "VWAP pullback", "vwap-pullback"],
+    [/\bmean reversion\b/i, "Mean reversion", "mean-reversion"],
+    [/\btrend following\b/i, "Trend following", "trend-following"],
+    [/\brisk parity\b/i, "Risk parity", "risk-parity"],
+    [/\bmomentum\b/i, "Momentum", "momentum"]
   ],
   risk: [
     [/\bstop loss\b|\bstop\b/i, "Stop loss", "stop-loss"],
@@ -406,6 +416,18 @@ function tagChip(tag: string) {
       {tag}
     </Badge>
   );
+}
+
+function compactText(value: string, limit = 180) {
+  if (value.length <= limit) return value;
+  const clipped = value.slice(0, limit).replace(/\s+\S*$/, "");
+  return `${clipped}...`;
+}
+
+function essentialTechnicalTags(tags: string[], limit = 8) {
+  const directTags = uniqueTags(tags.filter((tag) => tag && !tag.includes(":")));
+  const values = directTags.length ? directTags : uniqueTags(tags);
+  return values.slice(0, limit);
 }
 
 function vaultItemFromImport(item: ImportedVaultItem): VaultItem {
@@ -683,6 +705,7 @@ export function WorkspaceApp() {
     message: string;
   }>({ tone: "idle", message: "Waiting for a link or file." });
   const [selectedGraphNodeId, setSelectedGraphNodeId] = useState("memory");
+  const tradeFormRef = useRef<HTMLFormElement>(null);
   const [graphView, setGraphView] = useState<GraphViewport>({
     centerX: 460,
     centerY: 280,
@@ -911,6 +934,31 @@ export function WorkspaceApp() {
     } catch {
       setApiOnline(false);
     }
+  }
+
+  function applyTradeDraft(recommendation: TradeRecommendation) {
+    const draft = recommendation.draft;
+    const form = tradeFormRef.current;
+    if (!draft || !form) return;
+
+    const setField = (name: string, value: string | undefined) => {
+      if (value === undefined) return;
+      const field = form.elements.namedItem(name);
+      if (field instanceof HTMLInputElement || field instanceof HTMLSelectElement || field instanceof HTMLTextAreaElement) {
+        field.value = value;
+      }
+    };
+
+    setQuickTradeText("");
+    setField("symbol", draft.symbol);
+    setField("side", draft.side);
+    setField("strategy", draft.strategy);
+    setField("setup", draft.setup);
+    setField("emotion", draft.emotion);
+    setField("quantity", draft.quantity);
+    setField("fees", draft.fees);
+    setField("notes", draft.notes);
+    setQuickTradeMessage(`Filled trade draft from ${recommendation.title}. Add entry and exit prices before logging.`);
   }
 
   async function saveImportedVaultItem(item: ImportedVaultItem) {
@@ -1338,14 +1386,14 @@ export function WorkspaceApp() {
                                   Technicals
                                 </p>
                                 <div className="mt-2 flex flex-wrap gap-2">
-                                  {technicalTags.slice(0, 18).map(tagChip)}
+                                  {essentialTechnicalTags(technicalTags).map(tagChip)}
                                 </div>
                                 <div className="mt-3 grid gap-2 text-sm md:grid-cols-2">
-                                  {Object.entries(technicalProfile).slice(0, 6).map(([category, values]) => (
+                                  {Object.entries(technicalProfile).slice(0, 4).map(([category, values]) => (
                                     <SnapshotRow
                                       key={category}
                                       label={category.replaceAll("_", " ")}
-                                      value={values.slice(0, 3).join(", ")}
+                                      value={values.slice(0, 2).join(", ")}
                                     />
                                   ))}
                                 </div>
@@ -1511,6 +1559,7 @@ export function WorkspaceApp() {
               <form
                 className="rounded-lg border border-line bg-card/86 p-4 shadow-panel"
                 onSubmit={addTrade}
+                ref={tradeFormRef}
               >
                 <div className="flex items-center justify-between">
                   <h2 className="text-base font-semibold text-ink">Trade Log</h2>
@@ -1624,6 +1673,7 @@ export function WorkspaceApp() {
                     {tradeRecommendations.map((recommendation) => (
                       <TradeRecommendationCard
                         key={recommendation.id}
+                        onApply={applyTradeDraft}
                         recommendation={recommendation}
                       />
                     ))}
@@ -2065,7 +2115,9 @@ function StrategyInfoSummary({ strategyInfo }: { strategyInfo: GeneratedStrategy
       {strategyInfo.technical_tags?.length ? (
         <div className="mt-3">
           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/45">Technicals</p>
-          <div className="mt-2 flex flex-wrap gap-2">{strategyInfo.technical_tags.slice(0, 16).map(tagChip)}</div>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {essentialTechnicalTags(strategyInfo.technical_tags).map(tagChip)}
+          </div>
         </div>
       ) : null}
       <StrategyRuleList label="Entry" values={strategyInfo.entry_rules ?? []} />
@@ -2080,6 +2132,8 @@ function SourceDetailsSummary({ details }: { details: SourceDetails }) {
   const subjects = details.subjects?.filter(Boolean) ?? [];
   const notes = details.implementation_notes?.filter(Boolean) ?? [];
   const abstract = details.abstract ?? "";
+  const authorLabel =
+    authors.length > 3 ? `${authors.slice(0, 3).join(", ")} +${authors.length - 3}` : authors.join(", ");
 
   return (
     <div className="mt-4 border-l-2 border-ink/20 pl-3">
@@ -2087,27 +2141,27 @@ function SourceDetailsSummary({ details }: { details: SourceDetails }) {
         Source Details
       </p>
       <div className="mt-2 grid gap-2 text-sm md:grid-cols-2">
-        {authors.length > 0 && <SnapshotRow label="Authors" value={authors.join(", ")} />}
+        {authors.length > 0 && <SnapshotRow label="Authors" value={authorLabel} />}
         {details.submitted && <SnapshotRow label="Submitted" value={details.submitted} />}
         {details.primary_category && (
           <SnapshotRow label="Category" value={details.primary_category} />
         )}
-        {details.comments && <SnapshotRow label="Comments" value={details.comments} />}
+        {details.comments && <SnapshotRow label="Comments" value={compactText(details.comments, 80)} />}
         {details.doi && <SnapshotRow label="DOI" value={details.doi} />}
       </div>
       {subjects.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-2">{subjects.map(tagChip)}</div>
+        <div className="mt-3 flex flex-wrap gap-2">{subjects.slice(0, 3).map(tagChip)}</div>
       )}
       {abstract && (
         <p className="mt-3 text-sm leading-6 text-ink/66">
-          {abstract.length > 520 ? `${abstract.slice(0, 520)}...` : abstract}
+          {compactText(abstract, 260)}
         </p>
       )}
       {notes.length > 0 && (
         <div className="mt-3 grid gap-2">
-          {notes.slice(0, 3).map((note) => (
+          {notes.slice(0, 2).map((note) => (
             <p key={note} className="rounded-md bg-paper/65 px-3 py-2 text-sm leading-6 text-ink/68">
-              {note}
+              {compactText(note, 170)}
             </p>
           ))}
         </div>
@@ -2118,12 +2172,13 @@ function SourceDetailsSummary({ details }: { details: SourceDetails }) {
 
 function StrategyRuleList({ label, values }: { label: string; values: string[] }) {
   if (!values.length) return null;
+  const conciseValues = Array.from(new Set(values.map((value) => compactText(value, 150)))).slice(0, 2);
 
   return (
     <div className="mt-3">
       <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/45">{label}</p>
       <ul className="mt-1 grid gap-1 text-sm leading-6 text-ink/66">
-        {values.map((value) => (
+        {conciseValues.map((value) => (
           <li key={value}>{value}</li>
         ))}
       </ul>
@@ -2156,7 +2211,13 @@ function InsightCard({ insight }: { insight: TradingInsight }) {
   );
 }
 
-function TradeRecommendationCard({ recommendation }: { recommendation: TradeRecommendation }) {
+function TradeRecommendationCard({
+  recommendation,
+  onApply
+}: {
+  recommendation: TradeRecommendation;
+  onApply: (recommendation: TradeRecommendation) => void;
+}) {
   return (
     <article className="rounded-lg border border-caution/25 bg-caution/10 p-4">
       <div className="flex items-start justify-between gap-3">
@@ -2172,7 +2233,7 @@ function TradeRecommendationCard({ recommendation }: { recommendation: TradeReco
       <p className="mt-2 text-sm leading-6 text-ink/64">{recommendation.rationale}</p>
       {recommendation.technical_tags.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
-          {recommendation.technical_tags.slice(0, 10).map(tagChip)}
+          {essentialTechnicalTags(recommendation.technical_tags).map(tagChip)}
         </div>
       )}
       {recommendation.risk_notes.length > 0 && (
@@ -2186,6 +2247,16 @@ function TradeRecommendationCard({ recommendation }: { recommendation: TradeReco
         <div className="mt-3 flex flex-wrap gap-2">
           {recommendation.evidence.slice(0, 3).map(tagChip)}
         </div>
+      )}
+      {recommendation.draft && (
+        <button
+          className="mt-3 inline-flex min-h-9 items-center gap-2 rounded-md border border-caution/30 bg-card px-3 text-sm font-semibold text-ink transition hover:bg-caution/15"
+          onClick={() => onApply(recommendation)}
+          type="button"
+        >
+          <Wand2 aria-hidden="true" size={16} strokeWidth={2.2} />
+          Fill trade draft
+        </button>
       )}
     </article>
   );

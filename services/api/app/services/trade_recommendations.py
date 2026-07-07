@@ -83,6 +83,8 @@ def _recommend_from_source(
     if related_trades:
         evidence.append(f"{len(related_trades)} matching trades, {round(win_rate * 100)}% win rate")
 
+    risk_notes = [_excerpt(note, 150) for note in risk_rules[:2]]
+
     return TradeRecommendationRead(
         id=f"recommend-{source.id}",
         title=setup or strategy_name,
@@ -91,9 +93,16 @@ def _recommend_from_source(
         setup=setup,
         confidence=round(confidence, 2),
         technical_tags=technical_tags[:14],
-        rationale=_rationale(source.title, entry_rules, exit_rules, related_trades),
-        risk_notes=risk_rules[:4] or ["Define invalidation and max risk before taking this setup."],
+        rationale=_excerpt(_rationale(source.title, entry_rules, exit_rules, related_trades), 220),
+        risk_notes=risk_notes or ["Define invalidation and max risk before taking this setup."],
         evidence=evidence,
+        draft=_trade_draft(
+            source=source,
+            strategy_name=strategy_name,
+            setup=setup,
+            technical_tags=technical_tags,
+            related_trades=related_trades,
+        ),
     )
 
 
@@ -104,7 +113,7 @@ def _action(
     related_trades: list[Trade],
     total_pnl: Decimal,
 ) -> str:
-    label = setup or strategy_name
+    label = _excerpt(setup or strategy_name, 72)
     if not related_trades:
         return f"Paper-trade {label} with tiny size until it has a journaled sample."
     if total_pnl > 0:
@@ -112,6 +121,109 @@ def _action(
     if total_pnl < 0:
         return f"Do not size up {label}; review losing examples before the next attempt."
     return f"Keep {label} in observation mode until the edge is clearer."
+
+
+def _trade_draft(
+    *,
+    source: SourceDocument,
+    strategy_name: str,
+    setup: str | None,
+    technical_tags: list[str],
+    related_trades: list[Trade],
+) -> dict:
+    selected_setup = setup or _setup_from_tags(technical_tags)
+    symbol = _common_trade_value(related_trades, "symbol") or _symbol_from_source(
+        source,
+        technical_tags,
+    )
+    side = _common_trade_value(related_trades, "side") or _side_from_tags(technical_tags)
+    notes = _draft_notes(source, selected_setup, technical_tags)
+    return {
+        "symbol": symbol,
+        "side": side,
+        "strategy": strategy_name,
+        "setup": selected_setup,
+        "emotion": "patient",
+        "quantity": "1",
+        "fees": "0",
+        "notes": notes,
+        "quick_text": (
+            f"{symbol} {side} entry [price] exit [price] qty 1 "
+            f"strategy {strategy_name} setup {selected_setup} notes {notes}"
+        ),
+    }
+
+
+def _setup_from_tags(tags: list[str]) -> str:
+    tag_text = " ".join(tags)
+    priorities = [
+        ("opening-range-breakout", "Opening range breakout"),
+        ("vwap-pullback", "VWAP pullback"),
+        ("mean-reversion", "Mean reversion"),
+        ("trend-following", "Trend following"),
+        ("risk-parity", "Risk parity"),
+        ("momentum", "Momentum"),
+        ("breakout", "Breakout"),
+        ("macd", "MACD momentum"),
+        ("moving-average", "Moving average trend"),
+    ]
+    for needle, label in priorities:
+        if needle in tag_text:
+            return label
+    return "Source-backed setup"
+
+
+def _common_trade_value(trades: list[Trade], attr: str) -> str | None:
+    counts: dict[str, int] = {}
+    for trade in trades:
+        value = str(getattr(trade, attr, "")).strip()
+        if value:
+            counts[value] = counts.get(value, 0) + 1
+    if not counts:
+        return None
+    return sorted(counts.items(), key=lambda item: item[1], reverse=True)[0][0]
+
+
+def _symbol_from_source(source: SourceDocument, tags: list[str]) -> str:
+    text = f"{source.title} {source.content_text or ''} {' '.join(tags)}".lower()
+    if any(value in text for value in ["futures", "cme", "cross-asset"]):
+        return "ES"
+    if "crypto" in text or "btc" in text:
+        return "BTC"
+    if "forex" in text or "fx" in text:
+        return "EURUSD"
+    return "SPY"
+
+
+def _side_from_tags(tags: list[str]) -> str:
+    tag_text = " ".join(tags)
+    if any(value in tag_text for value in ["fade", "breakdown", "short"]):
+        return "short"
+    return "long"
+
+
+def _draft_notes(source: SourceDocument, setup: str, tags: list[str]) -> str:
+    metadata = source.source_metadata or {}
+    details = metadata.get("source_details")
+    notes: list[str] = []
+    if isinstance(details, dict):
+        notes.extend(
+            str(note).strip()
+            for note in details.get("implementation_notes", [])
+            if str(note).strip()
+        )
+    if not notes:
+        strategy_info = _strategy_info(source) or {}
+        notes.extend(_rules(strategy_info, "entry_rules")[:1])
+    tag_summary = ", ".join(tag for tag in tags[:5] if ":" not in tag)
+    base = _excerpt(notes[0], 150) if notes else f"Use {setup} only when source conditions align."
+    return f"{base} Tags: {tag_summary}.".strip()
+
+
+def _excerpt(value: str, limit: int) -> str:
+    if len(value) <= limit:
+        return value
+    return f"{value[:limit].rsplit(' ', 1)[0]}..."
 
 
 def _rationale(

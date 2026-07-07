@@ -2,6 +2,8 @@
 
 Date: 2026-07-06
 
+Follow-up: 2026-07-07
+
 ## Implemented
 
 - Added opt-in AI enrichment routing in the API with provider priority order:
@@ -15,6 +17,14 @@ Date: 2026-07-06
   arXiv metadata into paper title, authors, abstract, subject, comments,
   implementation notes, and source details. Existing arXiv placeholders are
   backfilled and relearned when documents are listed.
+- Added arXiv abs-page fallback for fresh papers that are not yet returned by
+  the Atom feed. Verified `https://arxiv.org/pdf/2607.00475` imports as
+  "End-to-End Parametric Portfolio Policies for Cross-Asset Futures Timing:
+  When Do AI Models Beat Simple Rules?" with authors Austin Pollok and Kevin
+  Robik, subject tags, futures/risk-parity technicals, and concise strategy
+  evidence.
+- Added cleanup for saved arXiv rows with placeholder/noisy metadata so the
+  vault list endpoint refreshes them and relearns their graph facts.
 - Blended imported strategy sources into the strategy scoreboard, insights, and
   graph. Sources can now create research-only strategy candidates or attach to
   existing strategies by overlapping strategy/setup/tag labels.
@@ -31,10 +41,16 @@ Date: 2026-07-06
 - Added source-card memory summaries in the UI so users can see how many chunks,
   nodes, and edges the personal AI learned from each source.
 - Added source-card technical sections and trade-tab recommendation cards.
+- Kept strategy/source technical details short in the UI by compacting source
+  abstracts, implementation notes, technical tags, and entry/exit/risk rule
+  lists.
 - Upgraded the map with pan, zoom, recenter, focus selected, click-to-focus
   nodes, and connection-driven traversal.
 - Added quick trade logging from one-line text, with live parse preview and
   source/history-backed strategy and setup suggestions.
+- Added recommendation draft fill: each recommendation can now provide symbol,
+  side, strategy, setup, emotion, quantity, fees, notes, and quick-text context,
+  and the UI can apply that draft directly into the trade form.
 - Updated README and environment docs.
 
 ## Verification
@@ -48,6 +64,25 @@ npm --prefix apps/web run lint
 ```
 
 All passed on 2026-07-06.
+
+Re-run on 2026-07-07 after arXiv fallback and recommendation draft-fill work:
+
+```bash
+cd services/api && .venv/bin/ruff check app tests
+cd services/api && .venv/bin/pytest
+npm --prefix apps/web run typecheck
+npm --prefix apps/web run lint
+```
+
+All passed. Live checks against the running local API also confirmed:
+
+- `POST /api/v1/vault/import-url` for `https://arxiv.org/pdf/2607.00475`
+  returns real paper metadata, risk-parity/futures tags, and concise strategy
+  fields.
+- `GET /api/v1/vault/documents` refreshes the saved placeholder/noisy arXiv row
+  and updates learned memory graph counts.
+- `GET /api/v1/trades/recommendations` returns a Risk parity recommendation
+  with an `ES long` draft sourced from the learned paper.
 
 ## AI Router Notes
 

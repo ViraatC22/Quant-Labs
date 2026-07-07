@@ -73,3 +73,4 @@ class TradeRecommendationRead(BaseModel):
     rationale: str
     risk_notes: list[str] = Field(default_factory=list)
     evidence: list[str] = Field(default_factory=list)
+    draft: dict = Field(default_factory=dict)

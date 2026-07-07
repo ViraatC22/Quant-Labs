@@ -35,7 +35,9 @@ Current app functionality:
   body, tags, strategy fields, and AI-router metadata auto-filled.
 - Resolve arXiv PDF links into paper title, authors, abstract, subject,
   comments, implementation notes, and source detail cards instead of storing
-  opaque PDF placeholders.
+  opaque PDF placeholders. If the arXiv Atom feed misses a fresh paper, imports
+  fall back to the paper's abs page and saved placeholders/noisy records are
+  repaired on vault load.
 - Extract trading technicals such as VWAP, FVG, liquidity sweeps, order blocks,
   support/resistance, sessions, risk rules, and timeframe context from sources.
 - Learn each saved source into memory chunks and a knowledge graph of source,
@@ -47,12 +49,16 @@ Current app functionality:
   then calculate P&L, win-rate, setup, state, and strategy metrics.
 - Generate trade recommendations from uploaded strategies, extracted
   technicals, learned source memory, and matching closed-trade history.
+- Fill the trade form from a source-backed recommendation draft, including
+  symbol, side, strategy, setup, quantity, fees, emotion, and notes.
 - Blend imported source insights into the current strategy scoreboard so new
   sources create research candidates and influence existing strategy nodes.
 - Move through a dynamic strategy graph with pan, zoom, focus, node detail, and
   source/trade/journal/tag relationships.
 - Review richer insight cards covering net edge, strategy leaks, source-backed
   validation gaps, routine effect, and AI-router status.
+- Keep source technicals concise in the UI by prioritizing essential tags,
+  compact source details, and short entry/exit/risk evidence.
 - Import/export the local workspace as JSON.
 
 When the API is available, records persist to the local API database. If the API

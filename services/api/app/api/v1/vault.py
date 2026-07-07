@@ -91,6 +91,7 @@ PHRASE_TAGS = {
     "opening range breakout": "orb",
     "mean reversion": "mean-reversion",
     "trend following": "trend-following",
+    "risk parity": "risk-parity",
     "range break": "range-break",
     "gap up": "gap",
     "gap down": "gap",
@@ -108,6 +109,7 @@ SETUP_PATTERNS = [
     ("pullback", "Pullback continuation"),
     ("mean reversion", "Mean reversion"),
     ("trend following", "Trend following"),
+    ("risk parity", "Risk parity"),
     ("breakout", "Breakout continuation"),
     ("breakdown", "Breakdown continuation"),
     ("reversal", "Reversal"),
@@ -215,6 +217,76 @@ class _HTMLTextExtractor(HTMLParser):
         return _clean_text(" ".join(self._parts))
 
 
+class _ArxivAbsExtractor(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.title_text = ""
+        self.authors_text = ""
+        self.abstract = ""
+        self.dateline = ""
+        self.subjects_text = ""
+        self.comments = ""
+        self.doi = ""
+        self.pdf_url = ""
+        self._capture: str | None = None
+        self._skip_descriptor = 0
+        self._parts: dict[str, list[str]] = {
+            "title": [],
+            "authors": [],
+            "abstract": [],
+            "dateline": [],
+            "subjects": [],
+            "comments": [],
+        }
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        attr_map = {key.lower(): value or "" for key, value in attrs}
+        class_name = attr_map.get("class", "")
+        href = attr_map.get("href", "")
+
+        if tag == "span" and "descriptor" in class_name:
+            self._skip_descriptor += 1
+        if tag == "h1" and "title" in class_name:
+            self._capture = "title"
+        elif tag == "div" and "authors" in class_name:
+            self._capture = "authors"
+        elif tag == "blockquote" and "abstract" in class_name:
+            self._capture = "abstract"
+        elif tag == "div" and "dateline" in class_name:
+            self._capture = "dateline"
+        elif tag == "td" and "subjects" in class_name:
+            self._capture = "subjects"
+        elif tag == "td" and "comments" in class_name:
+            self._capture = "comments"
+
+        if href:
+            if "/pdf/" in href and not self.pdf_url:
+                self.pdf_url = href
+            if "doi.org/" in href and not self.doi:
+                self.doi = href.removeprefix("https://doi.org/").removeprefix("http://doi.org/")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "span" and self._skip_descriptor:
+            self._skip_descriptor -= 1
+        if tag in {"h1", "div", "blockquote", "td"}:
+            self._capture = None
+
+    def handle_data(self, data: str) -> None:
+        text = data.strip()
+        if not text or not self._capture or self._skip_descriptor:
+            return
+        self._parts[self._capture].append(text)
+
+    def close(self) -> None:
+        super().close()
+        self.title_text = _clean_text(" ".join(self._parts["title"])).removeprefix("Title:")
+        self.authors_text = _clean_text(" ".join(self._parts["authors"])).removeprefix("Authors:")
+        self.abstract = _clean_text(" ".join(self._parts["abstract"])).removeprefix("Abstract:")
+        self.dateline = _clean_text(" ".join(self._parts["dateline"]))
+        self.subjects_text = _clean_text(" ".join(self._parts["subjects"]))
+        self.comments = _clean_text(" ".join(self._parts["comments"]))
+
+
 def _clean_text(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
@@ -227,6 +299,18 @@ def _date_label(value: str | None) -> str | None:
         return datetime.fromisoformat(normalized).date().isoformat()
     except ValueError:
         return value[:10]
+
+
+def _arxiv_dateline_date(value: str | None) -> str | None:
+    if not value:
+        return None
+    match = re.search(r"Submitted on\s+(\d{1,2}\s+[A-Za-z]{3}\s+\d{4})", value)
+    if not match:
+        return None
+    try:
+        return datetime.strptime(match.group(1), "%d %b %Y").date().isoformat()
+    except ValueError:
+        return match.group(1)
 
 
 def _decode_bytes(raw: bytes, content_type: str) -> str:
@@ -269,9 +353,72 @@ def _fetch_arxiv_metadata(arxiv_id: str) -> ArxivMetadata:
         api_url,
         headers={"User-Agent": "QuantLabsVaultImporter/0.1 (+local-first research vault)"},
     )
+    try:
+        with urlopen(request, timeout=10) as response:
+            raw = response.read(MAX_IMPORT_BYTES)
+        return _parse_arxiv_atom(raw, arxiv_id)
+    except (ET.ParseError, HTTPError, URLError, TimeoutError, ValueError):
+        return _fetch_arxiv_abs_metadata(arxiv_id)
+
+
+def _fetch_arxiv_abs_metadata(arxiv_id: str) -> ArxivMetadata:
+    abs_url = f"https://arxiv.org/abs/{quote(arxiv_id)}"
+    request = Request(
+        abs_url,
+        headers={"User-Agent": "QuantLabsVaultImporter/0.1 (+local-first research vault)"},
+    )
     with urlopen(request, timeout=10) as response:
         raw = response.read(MAX_IMPORT_BYTES)
-    return _parse_arxiv_atom(raw, arxiv_id)
+        content_type = response.headers.get("content-type", "text/html")
+    return _parse_arxiv_abs_html(raw, arxiv_id, content_type=content_type)
+
+
+def _parse_arxiv_subjects(value: str) -> tuple[str | None, list[str]]:
+    categories: list[str] = []
+    for match in re.finditer(r"\(([a-z.-]+\.[A-Z]{2})\)", value):
+        categories.append(match.group(1))
+    categories = list(dict.fromkeys(categories))
+    return (categories[0] if categories else None, categories)
+
+
+def _parse_arxiv_abs_html(
+    raw: bytes,
+    fallback_id: str,
+    *,
+    content_type: str = "text/html",
+) -> ArxivMetadata:
+    parser = _ArxivAbsExtractor()
+    parser.feed(_decode_bytes(raw, content_type))
+    parser.close()
+
+    title = _clean_text(parser.title_text).removeprefix("Title:").strip()
+    if not title:
+        raise ValueError(f"No arXiv title found for {fallback_id}.")
+
+    authors = [
+        author.strip(" ,")
+        for author in re.split(r"\s*,\s*|\s+and\s+", parser.authors_text)
+        if author.strip(" ,")
+    ]
+    primary, categories = _parse_arxiv_subjects(parser.subjects_text)
+    pdf_url = parser.pdf_url
+    if pdf_url.startswith("/"):
+        pdf_url = f"https://arxiv.org{pdf_url}"
+
+    return ArxivMetadata(
+        arxiv_id=fallback_id,
+        title=title,
+        authors=authors,
+        abstract=_clean_text(parser.abstract),
+        submitted=_arxiv_dateline_date(parser.dateline),
+        updated=None,
+        comments=parser.comments or None,
+        doi=parser.doi or None,
+        primary_category=primary,
+        categories=categories,
+        abs_url=f"https://arxiv.org/abs/{fallback_id}",
+        pdf_url=pdf_url or f"https://arxiv.org/pdf/{fallback_id}",
+    )
 
 
 def _parse_arxiv_atom(raw: bytes, fallback_id: str) -> ArxivMetadata:
@@ -326,7 +473,7 @@ def _arxiv_subjects(metadata: ArxivMetadata) -> list[str]:
             continue
         label = ARXIV_CATEGORY_LABELS.get(category, category)
         labels.append(f"{label} ({category})" if label != category else category)
-    return sorted(set(labels))
+    return list(dict.fromkeys(labels))
 
 
 def _arxiv_implementation_notes(metadata: ArxivMetadata) -> list[str]:
@@ -386,12 +533,12 @@ def _arxiv_body(metadata: ArxivMetadata) -> str:
     ]
     if subjects:
         parts.append(f"Subjects: {', '.join(subjects)}")
+    if metadata.abstract:
+        parts.append(f"Abstract: {metadata.abstract}")
     if metadata.comments:
         parts.append(f"Comments: {metadata.comments}")
     if metadata.doi:
         parts.append(f"DOI: {metadata.doi}")
-    if metadata.abstract:
-        parts.append(f"Abstract: {metadata.abstract}")
 
     notes = _arxiv_implementation_notes(metadata)
     if notes:
@@ -468,16 +615,29 @@ def _metadata_tags(title: str, body: str, source: str, kind: str) -> list[str]:
 
 
 def _sentences(text: str) -> list[str]:
-    compact = _clean_text(text)
-    chunks = re.split(r"(?<=[.!?])\s+|\n+|(?:^|\s)[-*]\s+", compact)
-    return [chunk.strip(" -") for chunk in chunks if len(chunk.strip(" -")) >= 8]
+    chunks = re.split(r"(?<=[.!?])\s+|\n+|(?:^|\s)[-*]\s+", text)
+    sentences = [_clean_text(chunk).strip(" -") for chunk in chunks]
+    return [sentence for sentence in sentences if len(sentence) >= 8]
+
+
+def _strategy_sentence(sentence: str) -> str | None:
+    if re.match(r"^(?:Title|Authors|Submitted|Subjects|Comments|DOI):", sentence, re.IGNORECASE):
+        return None
+    cleaned = re.sub(r"^(?:Abstract|Summary):\s*", "", sentence, flags=re.IGNORECASE)
+    cleaned = _clean_text(cleaned)
+    return cleaned or None
 
 
 def _rules_from_sentences(sentences: list[str], needles: set[str], limit: int = 3) -> list[str]:
     matches: list[str] = []
     for sentence in sentences:
-        if any(_sentence_has_needle(sentence, needle) for needle in needles):
-            matches.append(_excerpt(sentence))
+        strategy_sentence = _strategy_sentence(sentence)
+        if not strategy_sentence:
+            continue
+        if any(_sentence_has_needle(strategy_sentence, needle) for needle in needles):
+            rule = _excerpt(strategy_sentence, 160)
+            if rule not in matches:
+                matches.append(rule)
         if len(matches) == limit:
             break
     return matches
@@ -519,8 +679,9 @@ def _indicators(text: str) -> list[str]:
 
 def _summary(title: str, body: str) -> str:
     for sentence in _sentences(body):
-        if len(sentence) >= 24:
-            return sentence[:260]
+        strategy_sentence = _strategy_sentence(sentence)
+        if strategy_sentence and len(strategy_sentence) >= 24:
+            return strategy_sentence[:260]
     return f"Generated strategy context for {title}."
 
 
@@ -755,7 +916,27 @@ def _document_needs_supported_refresh(document: SourceDocument) -> bool:
 
     title_is_placeholder = document.title == _fallback_title(source)
     body_is_placeholder = (document.content_text or "").startswith("Uploaded pdf file:")
-    return title_is_placeholder or body_is_placeholder
+    return title_is_placeholder or body_is_placeholder or _has_noisy_strategy_metadata(metadata)
+
+
+def _has_noisy_strategy_metadata(metadata: dict) -> bool:
+    strategy_info = metadata.get("strategyInfo") or metadata.get("strategy_info")
+    if not isinstance(strategy_info, dict):
+        return False
+    summary = str(strategy_info.get("summary", ""))
+    if summary.startswith(("Title:", "Authors:", "Submitted:", "Subjects:")):
+        return True
+    if summary.lower().startswith(("presented at ", "accepted at ", "submitted to ")):
+        return True
+    for key in ["entry_rules", "exit_rules", "risk_rules"]:
+        values = strategy_info.get(key)
+        if not isinstance(values, list):
+            continue
+        for value in values:
+            text = str(value)
+            if "Abstract:" in text or text.startswith(("Authors:", "Submitted:", "Subjects:")):
+                return True
+    return False
 
 
 def _apply_import_to_document(document: SourceDocument, imported: VaultImportRead) -> None:
@@ -768,6 +949,8 @@ def _apply_import_to_document(document: SourceDocument, imported: VaultImportRea
         "tags": imported.tags,
         "aiTags": imported.ai_tags,
         "generated_tags": imported.ai_tags,
+        "sourceDetails": imported.metadata.get("source_details")
+        or old_metadata.get("sourceDetails"),
         "technicalTags": imported.metadata.get("technical_tags", []),
         "technicalProfile": imported.metadata.get("technical_profile", {}),
         "strategy_info": strategy_dump,
@@ -840,8 +1023,12 @@ def _document_metadata(document: SourceDocument) -> dict:
 
     if profile:
         metadata["technical_profile"] = profile
+        metadata["technicalProfile"] = profile
     if tags:
         metadata["technical_tags"] = sorted(tags)
+        metadata["technicalTags"] = sorted(tags)
+    if isinstance(metadata.get("source_details"), dict):
+        metadata["sourceDetails"] = metadata["source_details"]
 
     strategy_info = metadata.get("strategyInfo") or metadata.get("strategy_info")
     if isinstance(strategy_info, dict) and (profile or tags):

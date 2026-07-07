@@ -29,9 +29,40 @@ ARXIV_ATOM = (
     b"</feed>"
 )
 
+EMPTY_ARXIV_ATOM = (
+    b'<?xml version="1.0" encoding="UTF-8"?>'
+    b'<feed xmlns="http://www.w3.org/2005/Atom"></feed>'
+)
+
+ARXIV_ABS_HTML = (
+    b"<html><body>"
+    b'<div class="dateline">[Submitted on 1 Jul 2026]</div>'
+    b'<h1 class="title mathjax"><span class="descriptor">Title:</span>'
+    b"End-to-End Parametric Portfolio Policies for Cross-Asset Futures Timing: "
+    b"When Do AI Models Beat Simple Rules?</h1>"
+    b'<div class="authors"><span class="descriptor">Authors:</span>'
+    b"<a>Austin Pollok</a>, <a>Kevin Robik</a></div>"
+    b'<blockquote class="abstract mathjax"><span class="descriptor">Abstract:</span>'
+    b"Timing-based tilts across asset classes can drive much of the risk and return "
+    b"of a diversified cross-asset portfolio. We train policies on liquid CME futures "
+    b"and benchmark against equal weighting, risk parity, and time-series momentum."
+    b"</blockquote>"
+    b'<td class="tablecell subjects">Statistical Finance (q-fin.ST); '
+    b"Portfolio Management (q-fin.PM); Trading and Market Microstructure (q-fin.TR)</td>"
+    b'<a href="https://doi.org/10.48550/arXiv.2607.00475">doi</a>'
+    b'<a href="/pdf/2607.00475">View PDF</a>'
+    b"</body></html>"
+)
+
 
 class _FakeResponse:
-    headers = {"content-type": "application/atom+xml"}
+    def __init__(
+        self,
+        body: bytes = ARXIV_ATOM,
+        content_type: str = "application/atom+xml",
+    ) -> None:
+        self.body = body
+        self.headers = {"content-type": content_type}
 
     def __enter__(self) -> "_FakeResponse":
         return self
@@ -40,7 +71,7 @@ class _FakeResponse:
         return None
 
     def read(self, _limit: int) -> bytes:
-        return ARXIV_ATOM
+        return self.body
 
 
 def test_import_file_auto_extracts_text_fields() -> None:
@@ -108,6 +139,39 @@ def test_import_arxiv_pdf_scrapes_paper_metadata(monkeypatch) -> None:
     assert "Stochastic" not in payload["strategy_info"]["indicators"]
     assert "macd" in payload["metadata"]["technical_tags"]
     assert "paper" in payload["tags"]
+
+
+def test_import_arxiv_pdf_falls_back_to_abs_page(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def fake_urlopen(request, timeout=10):  # noqa: ANN001
+        calls.append(request.full_url)
+        assert timeout == 10
+        if "export.arxiv.org/api/query" in request.full_url:
+            return _FakeResponse(EMPTY_ARXIV_ATOM)
+        assert request.full_url == "https://arxiv.org/abs/2607.00475"
+        return _FakeResponse(ARXIV_ABS_HTML, "text/html")
+
+    monkeypatch.setattr(vault, "urlopen", fake_urlopen)
+    client = TestClient(create_app())
+
+    response = client.post(
+        "/api/v1/vault/import-url",
+        json={"url": "https://arxiv.org/pdf/2607.00475"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["title"].startswith("End-to-End Parametric Portfolio Policies")
+    assert payload["metadata"]["source_details"]["authors"] == ["Austin Pollok", "Kevin Robik"]
+    assert payload["metadata"]["source_details"]["submitted"] == "2026-07-01"
+    assert payload["metadata"]["source_details"]["primary_category"] == "q-fin.ST"
+    assert "risk-parity" in payload["tags"]
+    assert "futures" in payload["metadata"]["technical_tags"]
+    assert calls == [
+        "https://export.arxiv.org/api/query?id_list=2607.00475",
+        "https://arxiv.org/abs/2607.00475",
+    ]
 
 
 def test_ai_provider_status_defaults_to_local_mode() -> None:

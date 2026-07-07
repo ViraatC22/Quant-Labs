@@ -111,6 +111,17 @@ export type TradeRecommendation = {
   rationale: string;
   risk_notes: string[];
   evidence: string[];
+  draft?: {
+    symbol?: string;
+    side?: "long" | "short";
+    strategy?: string;
+    setup?: string;
+    emotion?: string;
+    quantity?: string;
+    fees?: string;
+    notes?: string;
+    quick_text?: string;
+  };
 };
 
 export type WorkspaceState = {

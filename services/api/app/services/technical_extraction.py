@@ -61,6 +61,7 @@ TECHNICAL_PATTERNS: dict[str, list[tuple[str, str, str]]] = {
         (r"\bvwap pullback\b", "VWAP pullback", "vwap-pullback"),
         (r"\bmean reversion\b", "Mean reversion", "mean-reversion"),
         (r"\btrend following\b", "Trend following", "trend-following"),
+        (r"\brisk parity\b", "Risk parity", "risk-parity"),
         (r"\bscalp\b|\bscalping\b", "Scalp", "scalp"),
         (r"\bswing\b", "Swing", "swing"),
         (r"\bmomentum\b", "Momentum", "momentum"),
