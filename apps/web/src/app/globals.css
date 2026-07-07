@@ -101,6 +101,48 @@
     background: hsl(var(--primary) / 0.18);
   }
 
+  @keyframes galaxy-star-twinkle {
+    0%,
+    100% {
+      opacity: 0.18;
+    }
+
+    45% {
+      opacity: 0.82;
+    }
+
+    62% {
+      opacity: 0.34;
+    }
+  }
+
+  @keyframes galaxy-orbit-drift {
+    0% {
+      stroke-dashoffset: 0;
+    }
+
+    100% {
+      stroke-dashoffset: -128;
+    }
+  }
+
+  .galaxy-star-twinkle {
+    animation-name: galaxy-star-twinkle;
+    animation-timing-function: ease-in-out;
+    animation-iteration-count: infinite;
+  }
+
+  .galaxy-orbit-drift {
+    animation-name: galaxy-orbit-drift;
+    animation-timing-function: linear;
+    animation-iteration-count: infinite;
+  }
+
+  .galaxy-paused .galaxy-star-twinkle,
+  .galaxy-paused .galaxy-orbit-drift {
+    animation-play-state: paused;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     *,
     ::before,

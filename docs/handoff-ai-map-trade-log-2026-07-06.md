@@ -95,6 +95,20 @@ Follow-up: 2026-07-07
 - Cleaned up the atlas view with a wider canvas, curved low-opacity links,
   quieter memory edges, conditional labels, and selected-node neighborhood
   highlighting.
+- Reworked the atlas again from the grid layout into an abstract galaxy:
+  Trading Memory sits at the core while sources, strategies, setups, trades,
+  symbols, states, journal entries, and tags spread across deterministic orbital
+  rings.
+- Added a faint starfield, orbit rings, core glow, and low-density constellation
+  labels so the map reads as a floating knowledge galaxy rather than boxed
+  workflow regions.
+- Added lightweight motion: graph nodes drift with deterministic sine offsets
+  while edges follow their rendered positions. Selecting a node pauses motion so
+  the inspector and connection highlights remain stable.
+- Reduced default label density so minor technical tags behave like stars until
+  they are selected, hovered, or connected to the selected node.
+- Kept the dedicated wide Atlas layout and single 380px node inspector, hiding
+  the generic workspace rail on that tab so the graph is not compressed.
 - Added a recommended routine card that derives how to trade, what setup to
   look for, when to execute, and risk/review steps from extracted strategy
   rules and the current knowledge base.
@@ -210,6 +224,26 @@ Both passed.
 
 Re-run on 2026-07-07 after asset-class trade ticket and collapsible trade log
 work:
+
+```bash
+npm --prefix apps/web run typecheck
+npm --prefix apps/web run lint
+```
+
+Both passed.
+
+Re-run on 2026-07-07 after Strategy Atlas workflow-layout polish:
+
+```bash
+npm --prefix apps/web run typecheck
+npm --prefix apps/web run lint
+```
+
+Both passed. In-app browser visual verification was blocked by the browser
+security policy for `http://localhost:3000/`, so this pass was verified through
+code checks rather than a browser screenshot.
+
+Re-run on 2026-07-07 after Strategy Atlas galaxy redesign:
 
 ```bash
 npm --prefix apps/web run typecheck

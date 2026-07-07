@@ -147,12 +147,22 @@ type GraphModel = {
   edges: GraphEdge[];
 };
 
-type GraphClusterGuide = {
-  label: string;
+type GalaxyStar = {
+  id: string;
   x: number;
   y: number;
-  width: number;
-  height: number;
+  r: number;
+  opacity: number;
+  delay: number;
+  duration: number;
+};
+
+type GalaxyOrbit = {
+  rx: number;
+  ry: number;
+  opacity: number;
+  strokeWidth: number;
+  rotate: number;
 };
 
 type SourceStrategySignal = {
@@ -231,18 +241,31 @@ const emptyState: WorkspaceState = {
   trades: []
 };
 
-const graphClusterGuides: GraphClusterGuide[] = [
-  { label: "Research Inputs", x: 40, y: 60, width: 250, height: 286 },
-  { label: "Strategy Logic", x: 350, y: 60, width: 236, height: 286 },
-  { label: "Execution Plan", x: 668, y: 60, width: 236, height: 286 },
-  { label: "Trade Feedback", x: 984, y: 60, width: 220, height: 286 },
-  { label: "Journal Routine", x: 40, y: 462, width: 250, height: 214 },
-  { label: "Extracted Signals", x: 350, y: 462, width: 236, height: 214 },
-  { label: "Trader State", x: 668, y: 462, width: 236, height: 214 },
-  { label: "Markets", x: 984, y: 462, width: 220, height: 214 }
+const graphCanvasWidth = 1680;
+const graphCanvasHeight = 1040;
+const graphCenterX = graphCanvasWidth / 2;
+const graphCenterY = graphCanvasHeight / 2;
+const galaxyOrbits: GalaxyOrbit[] = [
+  { rx: 150, ry: 88, opacity: 0.18, strokeWidth: 1.4, rotate: -8 },
+  { rx: 285, ry: 165, opacity: 0.13, strokeWidth: 1.1, rotate: 12 },
+  { rx: 440, ry: 260, opacity: 0.1, strokeWidth: 0.9, rotate: -16 },
+  { rx: 610, ry: 360, opacity: 0.075, strokeWidth: 0.8, rotate: 8 },
+  { rx: 735, ry: 430, opacity: 0.05, strokeWidth: 0.7, rotate: -4 }
 ];
-const graphCanvasWidth = 1240;
-const graphCanvasHeight = 740;
+const galaxyStars: GalaxyStar[] = Array.from({ length: 150 }, (_, index) => {
+  const xSeed = seededUnit(index, 3);
+  const ySeed = seededUnit(index, 11);
+  const sizeSeed = seededUnit(index, 23);
+  return {
+    id: `star-${index}`,
+    x: Math.round(xSeed * graphCanvasWidth),
+    y: Math.round(ySeed * graphCanvasHeight),
+    r: Number((0.45 + sizeSeed * 1.35).toFixed(2)),
+    opacity: Number((0.16 + seededUnit(index, 31) * 0.58).toFixed(2)),
+    delay: Number((-seededUnit(index, 43) * 7).toFixed(2)),
+    duration: Number((3.8 + seededUnit(index, 59) * 5.2).toFixed(2))
+  };
+});
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const textLikeExtensions = [".txt", ".md", ".markdown", ".csv", ".json", ".log", ".pine", ".py"];
@@ -1040,6 +1063,9 @@ export function WorkspaceApp() {
     message: string;
   }>({ tone: "idle", message: "Waiting for a link or file." });
   const [selectedGraphNodeId, setSelectedGraphNodeId] = useState("memory");
+  const [hoveredGraphNodeId, setHoveredGraphNodeId] = useState<string | null>(null);
+  const [graphMotionPaused, setGraphMotionPaused] = useState(false);
+  const [graphTick, setGraphTick] = useState(0);
   const tradeFormRef = useRef<HTMLFormElement>(null);
   const [graphView, setGraphView] = useState<GraphViewport>({
     centerX: graphCanvasWidth / 2,
@@ -1321,11 +1347,29 @@ export function WorkspaceApp() {
     () => buildGraphModel(viewState, sourceStrategySignals, strategyStats),
     [sourceStrategySignals, strategyStats, viewState]
   );
+  useEffect(() => {
+    if (activeTab !== "graph" || graphMotionPaused) return;
+    const intervalId = window.setInterval(() => {
+      setGraphTick((current) => current + 0.075);
+    }, 80);
+    return () => window.clearInterval(intervalId);
+  }, [activeTab, graphMotionPaused]);
+  const renderedGraphNodes = useMemo(
+    () =>
+      graph.nodes.map((node) => {
+        const offset = galaxyDriftForNode(node, graphTick);
+        return { ...node, x: node.x + offset.x, y: node.y + offset.y };
+      }),
+    [graph.nodes, graphTick]
+  );
   const graphNodeLookup = useMemo(
-    () => new Map(graph.nodes.map((node) => [node.id, node])),
-    [graph.nodes]
+    () => new Map(renderedGraphNodes.map((node) => [node.id, node])),
+    [renderedGraphNodes]
   );
   const selectedGraphNode = graphNodeLookup.get(selectedGraphNodeId) ?? graph.nodes[0];
+  const activeGraphNode = hoveredGraphNodeId
+    ? graphNodeLookup.get(hoveredGraphNodeId) ?? selectedGraphNode
+    : selectedGraphNode;
   const selectedGraphEdges = useMemo(
     () =>
       selectedGraphNode
@@ -1333,16 +1377,23 @@ export function WorkspaceApp() {
         : [],
     [graph.edges, selectedGraphNode]
   );
+  const activeGraphEdges = useMemo(
+    () =>
+      activeGraphNode
+        ? graph.edges.filter((edge) => edge.from === activeGraphNode.id || edge.to === activeGraphNode.id)
+        : [],
+    [activeGraphNode, graph.edges]
+  );
   const focusedGraphNodeIds = useMemo(() => {
     const ids = new Set<string>();
-    if (selectedGraphNode) ids.add(selectedGraphNode.id);
-    selectedGraphEdges.forEach((edge) => {
+    if (activeGraphNode) ids.add(activeGraphNode.id);
+    activeGraphEdges.forEach((edge) => {
       ids.add(edge.from);
       ids.add(edge.to);
     });
     return ids;
-  }, [selectedGraphEdges, selectedGraphNode]);
-  const graphFocusMode = Boolean(selectedGraphNode && selectedGraphNode.type !== "memory");
+  }, [activeGraphEdges, activeGraphNode]);
+  const graphFocusMode = Boolean(activeGraphNode && activeGraphNode.type !== "memory");
   const graphViewBox = useMemo(() => {
     const width = graphCanvasWidth / graphView.zoom;
     const height = graphCanvasHeight / graphView.zoom;
@@ -1352,6 +1403,7 @@ export function WorkspaceApp() {
   function selectGraphNode(nodeId: string, focus = false) {
     const node = graphNodeLookup.get(nodeId);
     setSelectedGraphNodeId(nodeId);
+    setGraphMotionPaused(true);
     if (focus && node) focusGraphNode(node);
   }
 
@@ -1368,6 +1420,7 @@ export function WorkspaceApp() {
 
   function resetGraphView() {
     setGraphView({ centerX: graphCanvasWidth / 2, centerY: graphCanvasHeight / 2, zoom: 1 });
+    setGraphMotionPaused(false);
   }
 
   function panGraph(event: React.PointerEvent<SVGSVGElement>) {
@@ -1944,7 +1997,14 @@ export function WorkspaceApp() {
         </TabsList>
       </Tabs>
 
-      <div className="mx-auto grid max-w-7xl gap-6 px-4 py-6 lg:grid-cols-[1fr_340px]">
+      <div
+        className={[
+          "mx-auto grid gap-6 px-4 py-6",
+          activeTab === "graph"
+            ? "max-w-[1880px]"
+            : "max-w-7xl lg:grid-cols-[1fr_340px]"
+        ].join(" ")}
+      >
         <section className="space-y-6">
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             {metrics.map((metric) => (
@@ -2904,7 +2964,7 @@ export function WorkspaceApp() {
           {activeTab === "graph" && (
             <section
               aria-labelledby="graph-tab"
-              className="grid gap-4 xl:grid-cols-[1fr_360px]"
+              className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]"
               id="graph-panel"
               role="tabpanel"
             >
@@ -2917,6 +2977,14 @@ export function WorkspaceApp() {
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
+                    <button
+                      className="grid h-9 w-9 place-items-center rounded-md border border-line bg-card text-ink/70 transition hover:bg-paper"
+                      onClick={() => setGraphMotionPaused((current) => !current)}
+                      title={graphMotionPaused ? "Resume drift" : "Pause drift"}
+                      type="button"
+                    >
+                      <Activity aria-hidden="true" size={17} strokeWidth={2.2} />
+                    </button>
                     <button
                       className="grid h-9 w-9 place-items-center rounded-md border border-line bg-card text-ink/70 transition hover:bg-paper"
                       onClick={() => zoomGraph(0.18)}
@@ -2952,10 +3020,10 @@ export function WorkspaceApp() {
                   </div>
                 </div>
 
-                <div className="mt-5 overflow-hidden rounded-lg border border-ink/10 bg-[#171a1d]">
+                <div className="mt-5 overflow-hidden rounded-lg border border-ink/10 bg-[#060911]">
                   <svg
                     aria-label="Trading relationship atlas"
-                    className="h-[560px] w-full cursor-grab touch-none active:cursor-grabbing"
+                    className="h-[min(78vh,780px)] min-h-[640px] w-full cursor-grab touch-none active:cursor-grabbing"
                     onPointerDown={(event) => {
                       if ((event.target as Element).closest("[data-graph-node='true']")) return;
                       setGraphDrag({
@@ -2974,40 +3042,101 @@ export function WorkspaceApp() {
                     role="img"
                     viewBox={graphViewBox}
                   >
-                    <rect fill="#171a1d" height="3000" width="3000" x="-1040" y="-1220" />
-                    {graphClusterGuides.map((guide) => (
-                      <g key={guide.label}>
-                        <rect
-                          fill="none"
-                          height={guide.height}
-                          rx="14"
-                          stroke="#d8d1c3"
-                          strokeDasharray="8 10"
-                          strokeOpacity="0.2"
-                          width={guide.width}
-                          x={guide.x}
-                          y={guide.y}
+                    <defs>
+                      <radialGradient id="atlasGalaxyCore" cx="50%" cy="50%" r="50%">
+                        <stop offset="0%" stopColor="#f7f3ea" stopOpacity="0.52" />
+                        <stop offset="30%" stopColor="#7bd7e8" stopOpacity="0.15" />
+                        <stop offset="72%" stopColor="#6d5bd0" stopOpacity="0.07" />
+                        <stop offset="100%" stopColor="#060911" stopOpacity="0" />
+                      </radialGradient>
+                      <filter id="atlasStarGlow" height="220%" width="220%" x="-60%" y="-60%">
+                        <feGaussianBlur stdDeviation="3" />
+                      </filter>
+                    </defs>
+                    <rect fill="#060911" height="3000" width="3600" x="-960" y="-980" />
+                    <circle
+                      cx={graphCenterX}
+                      cy={graphCenterY}
+                      fill="url(#atlasGalaxyCore)"
+                      opacity="0.95"
+                      r="560"
+                    />
+                    <g className={graphMotionPaused ? "galaxy-paused" : ""}>
+                      {galaxyStars.map((star) => (
+                        <circle
+                          className="galaxy-star-twinkle"
+                          cx={star.x}
+                          cy={star.y}
+                          fill="#f7f3ea"
+                          key={star.id}
+                          opacity={star.opacity}
+                          r={star.r}
+                          style={{
+                            animationDelay: `${star.delay}s`,
+                            animationDuration: `${star.duration}s`
+                          }}
                         />
+                      ))}
+                      {galaxyOrbits.map((orbit, index) => (
+                        <ellipse
+                          className="galaxy-orbit-drift"
+                          cx={graphCenterX}
+                          cy={graphCenterY}
+                          fill="none"
+                          key={`orbit-${index}`}
+                          opacity={orbit.opacity}
+                          rx={orbit.rx}
+                          ry={orbit.ry}
+                          stroke="#8dd6e5"
+                          strokeDasharray="4 12"
+                          strokeWidth={orbit.strokeWidth}
+                          style={{
+                            animationDelay: `${index * -2.6}s`,
+                            animationDuration: `${24 + index * 8}s`,
+                            transform: `rotate(${orbit.rotate}deg)`,
+                            transformBox: "fill-box",
+                            transformOrigin: "center"
+                          }}
+                        />
+                      ))}
+                    </g>
+                    <g opacity="0.38">
+                      {["Source", "Strategy", "Execution", "Trades", "Markets", "State"].map((label, index) => (
                         <text
                           fill="#d8d1c3"
                           fontSize="11"
                           fontWeight={700}
-                          opacity="0.48"
-                          x={guide.x + 14}
-                          y={guide.y + 22}
+                          key={label}
+                          opacity="0.42"
+                          textAnchor="middle"
+                          x={graphCenterX + Math.cos(index * 1.047 + 0.3) * 690}
+                          y={graphCenterY + Math.sin(index * 1.047 + 0.3) * 405}
                         >
-                          {guide.label}
+                          {label}
                         </text>
-                      </g>
-                    ))}
+                      ))}
+                    </g>
+                    {renderedGraphNodes
+                      .filter((node) => node.type === "memory")
+                      .map((node) => (
+                        <circle
+                          cx={node.x}
+                          cy={node.y}
+                          fill="#f7f3ea"
+                          filter="url(#atlasStarGlow)"
+                          key={`${node.id}-glow`}
+                          opacity="0.35"
+                          r={graphNodeRadius(node) * 2.1}
+                        />
+                      ))}
                     {graph.edges.map((edge) => {
                       const from = graphNodeLookup.get(edge.from);
                       const to = graphNodeLookup.get(edge.to);
                       if (!from || !to) return null;
                       const active =
-                        graphFocusMode && (edge.from === selectedGraphNode?.id || edge.to === selectedGraphNode?.id);
+                        graphFocusMode && (edge.from === activeGraphNode?.id || edge.to === activeGraphNode?.id);
                       const memoryEdge = from.type === "memory" || to.type === "memory";
-                      const opacity = active ? 0.76 : memoryEdge ? 0.055 : graphFocusMode ? 0.07 : 0.16;
+                      const opacity = active ? 0.92 : graphFocusMode ? 0.025 : memoryEdge ? 0.08 : 0.15;
 
                       return (
                         <path
@@ -3015,18 +3144,19 @@ export function WorkspaceApp() {
                           fill="none"
                           key={edge.id}
                           opacity={opacity}
-                          stroke="#d8d1c3"
+                          stroke={active ? "#f7f3ea" : "#d8d1c3"}
                           strokeLinecap="round"
-                          strokeWidth={active ? 1.8 : 0.9}
+                          strokeWidth={active ? 2 : 0.85}
                         />
                       );
                     })}
-                    {graph.nodes.map((node) => {
+                    {renderedGraphNodes.map((node) => {
                       const style = graphNodeStyle(node.type);
                       const selected = selectedGraphNode?.id === node.id;
                       const focused = focusedGraphNodeIds.has(node.id);
                       const labelVisible = graphLabelVisible(node, selected, focused, graphFocusMode);
                       const muted = graphFocusMode && !focused;
+                      const radius = graphNodeRadius(node);
 
                       return (
                         <g
@@ -3034,6 +3164,8 @@ export function WorkspaceApp() {
                           data-graph-node="true"
                           key={node.id}
                           onClick={() => selectGraphNode(node.id, true)}
+                          onMouseEnter={() => setHoveredGraphNodeId(node.id)}
+                          onMouseLeave={() => setHoveredGraphNodeId(null)}
                           onKeyDown={(event) => {
                             if (event.key === "Enter" || event.key === " ") {
                               event.preventDefault();
@@ -3049,21 +3181,34 @@ export function WorkspaceApp() {
                             cy={node.y}
                             fill={style.fill}
                             opacity={muted ? 0.38 : 1}
-                            r={graphNodeRadius(node)}
+                            r={radius}
                             stroke={selected ? "#ffffff" : style.stroke}
                             strokeWidth={selected ? 3 : focused ? 2 : 1.25}
+                          />
+                          <circle
+                            cx={node.x}
+                            cy={node.y}
+                            fill="none"
+                            opacity={muted ? 0.08 : selected ? 0.45 : 0.18}
+                            r={radius + 7}
+                            stroke={selected ? "#ffffff" : style.stroke}
+                            strokeWidth="1"
                           />
                           {labelVisible && (
                             <text
                               fill="#f7f3ea"
-                              fontSize={selected ? "12" : "10.5"}
+                              fontSize={selected ? "13" : "12"}
                               fontWeight={selected ? 700 : 600}
-                              opacity={selected ? 1 : focused ? 0.88 : 0.62}
+                              opacity={selected ? 1 : focused ? 0.9 : 0.68}
                               textAnchor="middle"
                               x={node.x}
-                              y={node.y + graphNodeRadius(node) + 15}
+                              y={node.y + radius + 15}
                             >
-                              {shortLabel(node.label, node.type === "trade" ? 11 : 17)}
+                              {graphLabelLines(node.label, node.type).map((line, index) => (
+                                <tspan dy={index === 0 ? 0 : 13} key={`${node.id}-label-${index}`} x={node.x}>
+                                  {line}
+                                </tspan>
+                              ))}
                             </text>
                           )}
                         </g>
@@ -3073,9 +3218,9 @@ export function WorkspaceApp() {
                 </div>
               </section>
 
-              <section className="rounded-lg border border-line bg-card/86 p-4 shadow-panel">
+              <section className="h-fit rounded-lg border border-line bg-card/72 p-3 shadow-panel xl:sticky xl:top-6">
                 <div className="flex items-center justify-between">
-                  <h2 className="text-base font-semibold text-ink">Node Detail</h2>
+                  <h2 className="text-xl font-semibold text-ink">Node Detail</h2>
                   <ShieldCheck aria-hidden="true" className="text-moss" size={20} strokeWidth={2.1} />
                 </div>
                 {selectedGraphNode && (
@@ -3083,7 +3228,7 @@ export function WorkspaceApp() {
                     <span className="rounded-md bg-paper px-2 py-1 text-xs font-semibold uppercase text-ink/54">
                       {selectedGraphNode.type}
                     </span>
-                    <h3 className="mt-3 text-lg font-semibold text-ink">{selectedGraphNode.label}</h3>
+                    <h3 className="mt-3 text-xl font-semibold leading-tight text-ink">{selectedGraphNode.label}</h3>
                     <ReadMoreText
                       className="mt-2 text-sm leading-6 text-ink/64"
                       limit={180}
@@ -3133,6 +3278,7 @@ export function WorkspaceApp() {
           )}
         </section>
 
+        {activeTab !== "graph" && (
         <aside className="space-y-6">
           <section className="rounded-lg border border-line bg-card/86 p-4 shadow-panel">
             <h2 className="text-base font-semibold text-ink">Workspace</h2>
@@ -3185,6 +3331,7 @@ export function WorkspaceApp() {
             </div>
           </section>
         </aside>
+        )}
       </div>
     </>
   );
@@ -4573,62 +4720,79 @@ function graphId(type: GraphNodeType, value: string) {
 }
 
 function positionGraphNodes(nodes: GraphNode[]): PositionedGraphNode[] {
-  const layout: Record<
-    GraphNodeType,
-    { x: number; y: number; columns: number; colGap: number; rowGap: number }
-  > = {
-    memory: { x: graphCanvasWidth / 2, y: graphCanvasHeight / 2, columns: 1, colGap: 0, rowGap: 0 },
-    source: { x: 165, y: 218, columns: 2, colGap: 118, rowGap: 58 },
-    strategy: { x: 468, y: 218, columns: 2, colGap: 106, rowGap: 58 },
-    setup: { x: 786, y: 218, columns: 2, colGap: 106, rowGap: 58 },
-    trade: { x: 1094, y: 218, columns: 3, colGap: 66, rowGap: 54 },
-    journal: { x: 165, y: 570, columns: 2, colGap: 118, rowGap: 48 },
-    tag: { x: 468, y: 570, columns: 3, colGap: 68, rowGap: 44 },
-    emotion: { x: 786, y: 570, columns: 2, colGap: 106, rowGap: 48 },
-    symbol: { x: 1094, y: 570, columns: 2, colGap: 86, rowGap: 48 }
-  };
-  const types: GraphNodeType[] = [
-    "memory",
-    "source",
-    "strategy",
-    "setup",
-    "trade",
-    "journal",
-    "tag",
-    "emotion",
-    "symbol"
-  ];
-  const order = new Map<string, { index: number; total: number }>();
-
-  types.forEach((type) => {
-    const group = nodes
-      .filter((node) => node.type === type)
-      .sort((a, b) => b.weight - a.weight || a.label.localeCompare(b.label));
-    group.forEach((node, index) => order.set(node.id, { index, total: group.length }));
+  const grouped = new Map<GraphNodeType, GraphNode[]>();
+  nodes.forEach((node) => grouped.set(node.type, [...(grouped.get(node.type) ?? []), node]));
+  grouped.forEach((group, type) => {
+    grouped.set(type, [...group].sort((a, b) => b.weight - a.weight || a.label.localeCompare(b.label)));
   });
 
   return nodes.map((node) => {
-    if (node.type === "memory") {
-      return { ...node, x: layout.memory.x, y: layout.memory.y };
-    }
+    if (node.type === "memory") return { ...node, x: graphCenterX, y: graphCenterY };
 
-    const nodeOrder = order.get(node.id) ?? { index: 0, total: 1 };
-    const nodeLayout = layout[node.type];
-    const columns = Math.max(1, Math.min(nodeLayout.columns, nodeOrder.total));
-    const rows = Math.ceil(nodeOrder.total / columns);
-    const row = Math.floor(nodeOrder.index / columns);
-    const column = nodeOrder.index % columns;
-    const rowGap = Math.max(34, nodeLayout.rowGap - Math.max(0, rows - 3) * 3);
-    const columnOffset = (column - (columns - 1) / 2) * nodeLayout.colGap;
-    const rowOffset = (row - (rows - 1) / 2) * rowGap;
-    const stagger = rows > 2 && column % 2 === 1 ? rowGap * 0.24 : 0;
+    const group = grouped.get(node.type) ?? [node];
+    const index = Math.max(0, group.findIndex((item) => item.id === node.id));
+    const config = galaxyTypeOrbit(node.type);
+    const seed = hashNumber(node.id);
+    const shell = Math.floor(index / Math.max(1, config.shellSize));
+    const angle =
+      config.phase +
+      index * 2.399963229728653 +
+      seededUnit(seed, 17) * 0.5 +
+      shell * 0.18;
+    const radius =
+      config.radius +
+      shell * config.shellGap +
+      (seededUnit(seed, 31) - 0.5) * config.jitter;
+    const x = graphCenterX + Math.cos(angle) * radius;
+    const y = graphCenterY + Math.sin(angle) * radius * config.squash;
 
-    return {
-      ...node,
-      x: nodeLayout.x + columnOffset,
-      y: nodeLayout.y + rowOffset + stagger
-    };
+    return { ...node, x, y };
   });
+}
+
+function galaxyTypeOrbit(type: GraphNodeType) {
+  const configs: Record<
+    Exclude<GraphNodeType, "memory">,
+    { radius: number; shellGap: number; shellSize: number; jitter: number; squash: number; phase: number }
+  > = {
+    strategy: { radius: 190, shellGap: 54, shellSize: 7, jitter: 42, squash: 0.68, phase: -0.6 },
+    setup: { radius: 280, shellGap: 48, shellSize: 8, jitter: 54, squash: 0.64, phase: 0.3 },
+    source: { radius: 370, shellGap: 58, shellSize: 8, jitter: 62, squash: 0.62, phase: 2.5 },
+    journal: { radius: 425, shellGap: 52, shellSize: 7, jitter: 58, squash: 0.66, phase: 2.95 },
+    emotion: { radius: 360, shellGap: 46, shellSize: 7, jitter: 52, squash: 0.7, phase: 1.1 },
+    symbol: { radius: 500, shellGap: 46, shellSize: 8, jitter: 50, squash: 0.58, phase: 0.55 },
+    trade: { radius: 535, shellGap: 50, shellSize: 10, jitter: 64, squash: 0.62, phase: -0.12 },
+    tag: { radius: 610, shellGap: 42, shellSize: 18, jitter: 96, squash: 0.58, phase: 1.75 }
+  };
+  return configs[type as Exclude<GraphNodeType, "memory">];
+}
+
+function hashNumber(value: string | number) {
+  const text = String(value);
+  let hash = 2166136261;
+  for (let index = 0; index < text.length; index += 1) {
+    hash ^= text.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return Math.abs(hash >>> 0);
+}
+
+function seededUnit(value: string | number, salt: number) {
+  const seed = typeof value === "number" ? value : hashNumber(value);
+  const raw = Math.sin(seed * 12.9898 + salt * 78.233) * 43758.5453;
+  return raw - Math.floor(raw);
+}
+
+function galaxyDriftForNode(node: GraphNode, tick: number) {
+  if (node.type === "memory") return { x: 0, y: 0 };
+  const seed = hashNumber(node.id);
+  const amplitude = 4 + seededUnit(seed, 5) * 10;
+  const speed = 0.42 + seededUnit(seed, 9) * 0.5;
+  const phase = seededUnit(seed, 13) * Math.PI * 2;
+  return {
+    x: Math.cos(tick * speed + phase) * amplitude,
+    y: Math.sin(tick * (speed * 0.82) + phase * 0.7) * amplitude * 0.72
+  };
 }
 
 function graphNodeStyle(type: GraphNodeType) {
@@ -4648,17 +4812,16 @@ function graphNodeStyle(type: GraphNodeType) {
 }
 
 function graphNodeRadius(node: GraphNode) {
-  if (node.type === "memory") return 24;
-  return Math.min(20, 8 + Math.sqrt(node.weight) * 3);
+  if (node.type === "memory") return 34;
+  return Math.min(22, 9 + Math.sqrt(node.weight) * 3);
 }
 
 function graphEdgePath(from: PositionedGraphNode, to: PositionedGraphNode) {
-  const dx = to.x - from.x;
-  const curve = Math.max(42, Math.min(180, Math.abs(dx) * 0.42));
-  const direction = dx >= 0 ? 1 : -1;
-  const c1x = from.x + curve * direction;
-  const c2x = to.x - curve * direction;
-  return `M ${from.x} ${from.y} C ${c1x} ${from.y}, ${c2x} ${to.y}, ${to.x} ${to.y}`;
+  const sourceX = from.x < to.x ? from.x + graphNodeRadius(from) : from.x - graphNodeRadius(from);
+  const targetX = from.x < to.x ? to.x - graphNodeRadius(to) : to.x + graphNodeRadius(to);
+  const midX = sourceX + (targetX - sourceX) / 2;
+  const verticalBias = Math.abs(from.y - to.y) > 260 ? 36 : 0;
+  return `M ${sourceX} ${from.y} C ${midX} ${from.y + verticalBias}, ${midX} ${to.y - verticalBias}, ${targetX} ${to.y}`;
 }
 
 function graphLabelVisible(
@@ -4668,15 +4831,46 @@ function graphLabelVisible(
   focusMode: boolean
 ) {
   if (selected) return true;
-  if (focusMode) return focused && node.type !== "tag";
-  if (node.type === "memory" || node.type === "strategy") return true;
-  if (node.type === "source" || node.type === "setup") return node.weight > 1;
-  return false;
+  if (focusMode) return focused;
+  if (node.type === "memory" || node.type === "strategy" || node.type === "source") return true;
+  if (node.type === "trade" || node.type === "setup") return node.weight > 1;
+  if (node.type === "symbol" || node.type === "emotion" || node.type === "journal") return node.weight > 1;
+  return node.weight > 2;
 }
 
-function shortLabel(value: string, limit: number) {
-  if (value.length <= limit) return value;
-  return `${value.slice(0, Math.max(1, limit - 3))}...`;
+function graphLabelLines(value: string, type: GraphNodeType) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  const maxChars = type === "trade" ? 14 : type === "tag" ? 13 : 16;
+  if (normalized.length <= maxChars) return [normalized];
+  const words = normalized.split(" ");
+  const lines: string[] = [];
+  let current = "";
+
+  words.forEach((word) => {
+    if (lines.length >= 2) return;
+    const next = current ? `${current} ${word}` : word;
+    if (next.length <= maxChars) {
+      current = next;
+      return;
+    }
+    if (current) {
+      lines.push(current);
+      current = word;
+    } else {
+      lines.push(word.slice(0, maxChars));
+      current = "";
+    }
+  });
+  if (current && lines.length < 2) lines.push(current);
+
+  const remainder = words.slice(lines.join(" ").split(" ").length).join(" ");
+  if (remainder && lines.length) {
+    lines[lines.length - 1] =
+      lines[lines.length - 1].length > maxChars - 3
+        ? `${lines[lines.length - 1].slice(0, maxChars - 3)}...`
+        : `${lines[lines.length - 1]}...`;
+  }
+  return lines.slice(0, 2);
 }
 
 function bestTradeLabel(trades: TradeEntry[]) {

@@ -73,8 +73,9 @@ Current app functionality:
   risk/review steps.
 - Blend imported source insights into the current strategy scoreboard so new
   sources create research candidates and influence existing strategy nodes.
-- Move through the Strategy Atlas with spaced source, strategy, setup, trade,
-  journal, tag, state, and market groups plus pan, zoom, focus, and node detail.
+- Move through the Strategy Atlas as an abstract galaxy: Trading Memory is the
+  core, sources, strategies, setups, trades, symbols, states, and tags drift on
+  orbital rings, and selecting a node freezes motion for stable inspection.
 - Review richer insight cards covering net edge, strategy leaks, source-backed
   validation gaps, routine effect, and AI-router status.
 - Keep source technicals concise in the UI by prioritizing essential tags,
