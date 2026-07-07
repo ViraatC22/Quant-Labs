@@ -9,6 +9,7 @@ import type {
   AiRouterStatus,
   GeneratedStrategyInfo,
   JournalEntry,
+  SourceDetails,
   TradeEntry,
   TradeRecommendation,
   VaultItem
@@ -189,13 +190,17 @@ function documentFromDto(dto: DocumentDto): VaultItem {
     tags: (meta.tags as string[]) ?? [],
     aiTags: (meta.aiTags as string[]) ?? (meta.generated_tags as string[]) ?? [],
     technicalTags:
-      (meta.technicalTags as string[]) ??
       (meta.technical_tags as string[]) ??
+      (meta.technicalTags as string[]) ??
       ((meta.strategy_info as GeneratedStrategyInfo | null)?.technical_tags ?? []),
     technicalProfile:
-      (meta.technicalProfile as Record<string, string[]>) ??
       (meta.technical_profile as Record<string, string[]>) ??
+      (meta.technicalProfile as Record<string, string[]>) ??
       ((meta.strategy_info as GeneratedStrategyInfo | null)?.technical_profile ?? {}),
+    sourceDetails:
+      (meta.sourceDetails as SourceDetails | null) ??
+      (meta.source_details as SourceDetails | null) ??
+      null,
     strategyInfo:
       (meta.strategyInfo as GeneratedStrategyInfo | null) ??
       (meta.strategy_info as GeneratedStrategyInfo | null) ??
@@ -227,6 +232,8 @@ export async function createDocument(item: VaultItem): Promise<VaultItem> {
       technicalProfile: item.technicalProfile ?? {},
       technical_tags: item.technicalTags ?? [],
       technical_profile: item.technicalProfile ?? {},
+      sourceDetails: item.sourceDetails ?? null,
+      source_details: item.sourceDetails ?? null,
       strategyInfo: item.strategyInfo ?? null,
       strategy_info: item.strategyInfo ?? null,
       generated_tags: item.aiTags ?? [],

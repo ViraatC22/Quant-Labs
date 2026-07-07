@@ -25,6 +25,23 @@ export type SourceLearningSummary = {
   status: string;
 };
 
+export type SourceDetails = {
+  provider?: string;
+  arxiv_id?: string;
+  title?: string;
+  authors?: string[];
+  abstract?: string;
+  submitted?: string | null;
+  updated?: string | null;
+  comments?: string | null;
+  doi?: string | null;
+  primary_category?: string | null;
+  subjects?: string[];
+  abs_url?: string;
+  pdf_url?: string;
+  implementation_notes?: string[];
+};
+
 export type VaultItem = {
   id: string;
   title: string;
@@ -35,6 +52,7 @@ export type VaultItem = {
   aiTags?: string[];
   technicalTags?: string[];
   technicalProfile?: Record<string, string[]>;
+  sourceDetails?: SourceDetails | null;
   strategyInfo?: GeneratedStrategyInfo | null;
   learningSummary?: SourceLearningSummary | null;
   createdAt: string;

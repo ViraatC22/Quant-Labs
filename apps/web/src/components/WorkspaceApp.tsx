@@ -33,6 +33,7 @@ import type {
   AiRouterStatus,
   GeneratedStrategyInfo,
   JournalEntry,
+  SourceDetails,
   TradeEntry,
   TradeRecommendation,
   VaultItem,
@@ -50,6 +51,7 @@ type ImportedVaultItem = {
   ai_tags?: string[];
   technical_tags?: string[];
   technical_profile?: Record<string, string[]>;
+  source_details?: SourceDetails | null;
   strategy_info?: GeneratedStrategyInfo | null;
   metadata?: Record<string, unknown>;
 };
@@ -272,7 +274,7 @@ const technicalRules: Record<string, Array<readonly [RegExp, string, string]>> =
     [/\bmacd\b/i, "MACD", "macd"],
     [/\batr\b|\baverage true range\b/i, "ATR", "atr"],
     [/\badx\b/i, "ADX", "adx"],
-    [/\bstochastic\b/i, "Stochastic", "stochastic"],
+    [/\bstochastic oscillator\b|\bstochastic indicator\b|\bstoch\b/i, "Stochastic", "stochastic"],
     [/\bbollinger\b|\bbb\b/i, "Bollinger Bands", "bollinger-bands"],
     [/\bvolume profile\b/i, "Volume profile", "volume-profile"],
     [/\brelative volume\b|\brvol\b/i, "Relative volume", "relative-volume"]
@@ -411,6 +413,11 @@ function vaultItemFromImport(item: ImportedVaultItem): VaultItem {
   const metadataTechnicalProfile =
     (item.metadata?.technical_profile as Record<string, string[]> | undefined) ?? {};
   const metadataTechnicalTags = (item.metadata?.technical_tags as string[] | undefined) ?? [];
+  const sourceDetails =
+    item.source_details ??
+    (item.metadata?.source_details as SourceDetails | undefined) ??
+    (item.metadata?.sourceDetails as SourceDetails | undefined) ??
+    null;
   const technicalProfile = item.technical_profile ?? metadataTechnicalProfile;
   const technicalTags = uniqueTags([
     ...(item.technical_tags ?? []),
@@ -430,6 +437,7 @@ function vaultItemFromImport(item: ImportedVaultItem): VaultItem {
     aiTags,
     technicalTags,
     technicalProfile,
+    sourceDetails,
     strategyInfo,
     learningSummary: learningSummary ?? null,
     createdAt: new Date().toISOString()
@@ -796,6 +804,7 @@ export function WorkspaceApp() {
         item.aiTags?.join(" ") ?? "",
         item.technicalTags?.join(" ") ?? "",
         JSON.stringify(item.technicalProfile ?? {}),
+        JSON.stringify(item.sourceDetails ?? {}),
         JSON.stringify(item.strategyInfo ?? {}),
         JSON.stringify(item.learningSummary ?? {})
       ]
@@ -1289,6 +1298,7 @@ export function WorkspaceApp() {
                     const technicalTags = item.technicalTags ?? [];
                     const technicalProfile = item.technicalProfile ?? item.strategyInfo?.technical_profile ?? {};
                     const strategyInfo = item.strategyInfo;
+                    const sourceDetails = item.sourceDetails;
                     const learningSummary = item.learningSummary;
 
                     return (
@@ -1313,6 +1323,7 @@ export function WorkspaceApp() {
                               {item.source && tagChip(item.source)}
                               {item.tags.map(tagChip)}
                             </div>
+                            {sourceDetails && <SourceDetailsSummary details={sourceDetails} />}
                             {aiTags.length > 0 && (
                               <div className="mt-4 border-l-2 border-caution/35 pl-3">
                                 <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/48">
@@ -2060,6 +2071,47 @@ function StrategyInfoSummary({ strategyInfo }: { strategyInfo: GeneratedStrategy
       <StrategyRuleList label="Entry" values={strategyInfo.entry_rules ?? []} />
       <StrategyRuleList label="Exit" values={strategyInfo.exit_rules ?? []} />
       <StrategyRuleList label="Risk" values={strategyInfo.risk_rules ?? []} />
+    </div>
+  );
+}
+
+function SourceDetailsSummary({ details }: { details: SourceDetails }) {
+  const authors = details.authors?.filter(Boolean) ?? [];
+  const subjects = details.subjects?.filter(Boolean) ?? [];
+  const notes = details.implementation_notes?.filter(Boolean) ?? [];
+  const abstract = details.abstract ?? "";
+
+  return (
+    <div className="mt-4 border-l-2 border-ink/20 pl-3">
+      <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/48">
+        Source Details
+      </p>
+      <div className="mt-2 grid gap-2 text-sm md:grid-cols-2">
+        {authors.length > 0 && <SnapshotRow label="Authors" value={authors.join(", ")} />}
+        {details.submitted && <SnapshotRow label="Submitted" value={details.submitted} />}
+        {details.primary_category && (
+          <SnapshotRow label="Category" value={details.primary_category} />
+        )}
+        {details.comments && <SnapshotRow label="Comments" value={details.comments} />}
+        {details.doi && <SnapshotRow label="DOI" value={details.doi} />}
+      </div>
+      {subjects.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">{subjects.map(tagChip)}</div>
+      )}
+      {abstract && (
+        <p className="mt-3 text-sm leading-6 text-ink/66">
+          {abstract.length > 520 ? `${abstract.slice(0, 520)}...` : abstract}
+        </p>
+      )}
+      {notes.length > 0 && (
+        <div className="mt-3 grid gap-2">
+          {notes.slice(0, 3).map((note) => (
+            <p key={note} className="rounded-md bg-paper/65 px-3 py-2 text-sm leading-6 text-ink/68">
+              {note}
+            </p>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

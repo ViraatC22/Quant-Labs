@@ -33,6 +33,9 @@ Current app functionality:
 
 - Capture vault records from links or file uploads with title, type, source,
   body, tags, strategy fields, and AI-router metadata auto-filled.
+- Resolve arXiv PDF links into paper title, authors, abstract, subject,
+  comments, implementation notes, and source detail cards instead of storing
+  opaque PDF placeholders.
 - Extract trading technicals such as VWAP, FVG, liquidity sweeps, order blocks,
   support/resistance, sessions, risk rules, and timeframe context from sources.
 - Learn each saved source into memory chunks and a knowledge graph of source,

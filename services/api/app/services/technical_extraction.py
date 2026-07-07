@@ -13,7 +13,11 @@ TECHNICAL_PATTERNS: dict[str, list[tuple[str, str, str]]] = {
         (r"\bmacd\b", "MACD", "macd"),
         (r"\batr\b|\baverage true range\b", "ATR", "atr"),
         (r"\badx\b", "ADX", "adx"),
-        (r"\bstochastic\b", "Stochastic", "stochastic"),
+        (
+            r"\bstochastic oscillator\b|\bstochastic indicator\b|\bstoch\b",
+            "Stochastic",
+            "stochastic",
+        ),
         (r"\bbollinger\b|\bbb\b", "Bollinger Bands", "bollinger-bands"),
         (r"\bichimoku\b", "Ichimoku", "ichimoku"),
         (r"\bsupertrend\b", "Supertrend", "supertrend"),

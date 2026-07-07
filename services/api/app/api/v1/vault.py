@@ -1,10 +1,13 @@
 import mimetypes
 import re
+import xml.etree.ElementTree as ET
+from dataclasses import dataclass, field
+from datetime import datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Annotated
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 from uuid import UUID
 
@@ -139,6 +142,36 @@ TIMEFRAME_PATTERNS = [
     r"\b(?:daily|weekly|monthly|intraday|premarket|pre-market)\b",
 ]
 
+ATOM_NS = "{http://www.w3.org/2005/Atom}"
+ARXIV_NS = "{http://arxiv.org/schemas/atom}"
+ARXIV_CATEGORY_LABELS = {
+    "q-fin.CP": "Computational Finance",
+    "q-fin.EC": "Economics",
+    "q-fin.GN": "General Finance",
+    "q-fin.MF": "Mathematical Finance",
+    "q-fin.PM": "Portfolio Management",
+    "q-fin.PR": "Pricing of Securities",
+    "q-fin.RM": "Risk Management",
+    "q-fin.ST": "Statistical Finance",
+    "q-fin.TR": "Trading and Market Microstructure",
+}
+
+
+@dataclass(frozen=True)
+class ArxivMetadata:
+    arxiv_id: str
+    title: str
+    authors: list[str] = field(default_factory=list)
+    abstract: str = ""
+    submitted: str | None = None
+    updated: str | None = None
+    comments: str | None = None
+    doi: str | None = None
+    primary_category: str | None = None
+    categories: list[str] = field(default_factory=list)
+    abs_url: str | None = None
+    pdf_url: str | None = None
+
 
 class _HTMLTextExtractor(HTMLParser):
     def __init__(self) -> None:
@@ -186,6 +219,16 @@ def _clean_text(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
+def _date_label(value: str | None) -> str | None:
+    if not value:
+        return None
+    normalized = value.replace("Z", "+00:00")
+    try:
+        return datetime.fromisoformat(normalized).date().isoformat()
+    except ValueError:
+        return value[:10]
+
+
 def _decode_bytes(raw: bytes, content_type: str) -> str:
     charset_match = re.search(r"charset=([\w.-]+)", content_type, re.IGNORECASE)
     charset = charset_match.group(1) if charset_match else "utf-8"
@@ -198,6 +241,194 @@ def _decode_bytes(raw: bytes, content_type: str) -> str:
 def _domain_tag(url: str) -> str:
     host = urlparse(url).netloc.lower().removeprefix("www.")
     return host.split(":")[0] or "link"
+
+
+def _arxiv_id_from_url(url: str) -> str | None:
+    parsed = urlparse(url)
+    host = parsed.netloc.lower().removeprefix("www.")
+    if host not in {"arxiv.org", "export.arxiv.org"}:
+        return None
+
+    parts = [part for part in parsed.path.split("/") if part]
+    if len(parts) < 2 or parts[0] not in {"abs", "pdf"}:
+        return None
+
+    candidate = parts[1].removesuffix(".pdf")
+    candidate = re.sub(r"v\d+$", "", candidate)
+    if re.fullmatch(r"\d{4}\.\d{4,5}", candidate) or re.fullmatch(
+        r"[a-z.-]+/\d{7}", candidate,
+        re.IGNORECASE,
+    ):
+        return candidate
+    return None
+
+
+def _fetch_arxiv_metadata(arxiv_id: str) -> ArxivMetadata:
+    api_url = f"https://export.arxiv.org/api/query?id_list={quote(arxiv_id)}"
+    request = Request(
+        api_url,
+        headers={"User-Agent": "QuantLabsVaultImporter/0.1 (+local-first research vault)"},
+    )
+    with urlopen(request, timeout=10) as response:
+        raw = response.read(MAX_IMPORT_BYTES)
+    return _parse_arxiv_atom(raw, arxiv_id)
+
+
+def _parse_arxiv_atom(raw: bytes, fallback_id: str) -> ArxivMetadata:
+    root = ET.fromstring(raw)
+    entry = root.find(f"{ATOM_NS}entry")
+    if entry is None:
+        raise ValueError(f"No arXiv record found for {fallback_id}.")
+
+    title = _clean_text(entry.findtext(f"{ATOM_NS}title") or fallback_id)
+    abstract = _clean_text(entry.findtext(f"{ATOM_NS}summary") or "")
+    authors = [
+        _clean_text(author.findtext(f"{ATOM_NS}name") or "")
+        for author in entry.findall(f"{ATOM_NS}author")
+    ]
+    authors = [author for author in authors if author]
+    categories = [
+        category.attrib["term"]
+        for category in entry.findall(f"{ATOM_NS}category")
+        if category.attrib.get("term")
+    ]
+    primary = entry.find(f"{ARXIV_NS}primary_category")
+    links = entry.findall(f"{ATOM_NS}link")
+    pdf_url = next(
+        (
+            link.attrib.get("href")
+            for link in links
+            if link.attrib.get("title") == "pdf" or link.attrib.get("type") == "application/pdf"
+        ),
+        None,
+    )
+
+    return ArxivMetadata(
+        arxiv_id=fallback_id,
+        title=title,
+        authors=authors,
+        abstract=abstract,
+        submitted=_date_label(entry.findtext(f"{ATOM_NS}published")),
+        updated=_date_label(entry.findtext(f"{ATOM_NS}updated")),
+        comments=_clean_text(entry.findtext(f"{ARXIV_NS}comment") or "") or None,
+        doi=_clean_text(entry.findtext(f"{ARXIV_NS}doi") or "") or None,
+        primary_category=primary.attrib.get("term") if primary is not None else None,
+        categories=categories,
+        abs_url=_clean_text(entry.findtext(f"{ATOM_NS}id") or "") or None,
+        pdf_url=pdf_url,
+    )
+
+
+def _arxiv_subjects(metadata: ArxivMetadata) -> list[str]:
+    labels: list[str] = []
+    for category in metadata.categories or [metadata.primary_category or ""]:
+        if not category:
+            continue
+        label = ARXIV_CATEGORY_LABELS.get(category, category)
+        labels.append(f"{label} ({category})" if label != category else category)
+    return sorted(set(labels))
+
+
+def _arxiv_implementation_notes(metadata: ArxivMetadata) -> list[str]:
+    text = f"{metadata.title}. {metadata.abstract}"
+    sentences = _sentences(text)
+    title_key = metadata.title.strip(". ").lower()
+    needles = {
+        "strategy",
+        "strategies",
+        "signal",
+        "signals",
+        "estimator",
+        "portfolio",
+        "optimization",
+        "drift",
+        "feedback",
+        "trading",
+        "ema",
+        "macd",
+    }
+    notes = [
+        _excerpt(sentence)
+        for sentence in sentences
+        if sentence.strip(". ").lower() != title_key
+        and any(_sentence_has_needle(sentence, needle) for needle in needles)
+    ]
+    if notes:
+        return notes[:4]
+    return [_excerpt(sentence) for sentence in sentences[:2]]
+
+
+def _arxiv_details(metadata: ArxivMetadata, source: str) -> dict:
+    return {
+        "provider": "arxiv",
+        "arxiv_id": metadata.arxiv_id,
+        "title": metadata.title,
+        "authors": metadata.authors,
+        "abstract": metadata.abstract,
+        "submitted": metadata.submitted,
+        "updated": metadata.updated,
+        "comments": metadata.comments,
+        "doi": metadata.doi,
+        "primary_category": metadata.primary_category,
+        "subjects": _arxiv_subjects(metadata),
+        "abs_url": metadata.abs_url or f"https://arxiv.org/abs/{metadata.arxiv_id}",
+        "pdf_url": metadata.pdf_url or source,
+        "implementation_notes": _arxiv_implementation_notes(metadata),
+    }
+
+
+def _arxiv_body(metadata: ArxivMetadata) -> str:
+    subjects = _arxiv_subjects(metadata)
+    parts = [
+        f"Title: {metadata.title}",
+        f"Authors: {', '.join(metadata.authors) if metadata.authors else 'Unknown'}",
+        f"Submitted: {metadata.submitted or 'Unknown'}",
+    ]
+    if subjects:
+        parts.append(f"Subjects: {', '.join(subjects)}")
+    if metadata.comments:
+        parts.append(f"Comments: {metadata.comments}")
+    if metadata.doi:
+        parts.append(f"DOI: {metadata.doi}")
+    if metadata.abstract:
+        parts.append(f"Abstract: {metadata.abstract}")
+
+    notes = _arxiv_implementation_notes(metadata)
+    if notes:
+        parts.append("Strategy implementation notes:\n- " + "\n- ".join(notes))
+    return "\n\n".join(parts)[:MAX_BODY_CHARS]
+
+
+def _arxiv_import(source: str) -> VaultImportRead | None:
+    arxiv_id = _arxiv_id_from_url(source)
+    if not arxiv_id:
+        return None
+
+    metadata = _fetch_arxiv_metadata(arxiv_id)
+    details = _arxiv_details(metadata, source)
+    subject_tags = [
+        category.lower().replace(".", "-")
+        for category in [metadata.primary_category, *metadata.categories]
+        if category
+    ]
+    imported = _enriched_import(
+        title=metadata.title[:240],
+        kind="paper",
+        source=source,
+        body=_arxiv_body(metadata),
+        metadata={
+            "content_type": "application/arxiv+atom",
+            "import_method": "arxiv",
+            "source_details": details,
+            "tags": sorted({"paper", "arxiv", *subject_tags}),
+            "abs_url": details["abs_url"],
+            "pdf_url": details["pdf_url"],
+        },
+    )
+    extra_tags = set(imported.metadata.get("tags", []))
+    imported.tags = sorted({*imported.tags, *extra_tags})
+    imported.metadata["tags"] = imported.tags
+    return imported
 
 
 def _infer_kind(source: str, content_type: str) -> str:
@@ -245,9 +476,8 @@ def _sentences(text: str) -> list[str]:
 def _rules_from_sentences(sentences: list[str], needles: set[str], limit: int = 3) -> list[str]:
     matches: list[str] = []
     for sentence in sentences:
-        lowered = sentence.lower()
-        if any(needle in lowered for needle in needles):
-            matches.append(sentence[:220])
+        if any(_sentence_has_needle(sentence, needle) for needle in needles):
+            matches.append(_excerpt(sentence))
         if len(matches) == limit:
             break
     return matches
@@ -292,6 +522,19 @@ def _summary(title: str, body: str) -> str:
         if len(sentence) >= 24:
             return sentence[:260]
     return f"Generated strategy context for {title}."
+
+
+def _excerpt(value: str, limit: int = 220) -> str:
+    if len(value) <= limit:
+        return value
+    return f"{value[:limit].rsplit(' ', 1)[0]}..."
+
+
+def _sentence_has_needle(sentence: str, needle: str) -> bool:
+    lowered = sentence.lower()
+    if " " in needle:
+        return needle in lowered
+    return re.search(rf"\b{re.escape(needle)}\b", lowered, re.IGNORECASE) is not None
 
 
 def _ai_tags(title: str, body: str, source: str, kind: str) -> list[str]:
@@ -380,6 +623,11 @@ def _enriched_import(
     local_technical_tags = technical_tags_from_profile(local_technical_profile)
     base_tags = _metadata_tags(title, body, source, kind)
     generated_tags = _ai_tags(title, body, source, kind)
+    source_tags = {
+        str(tag).strip()
+        for tag in metadata.get("tags", [])
+        if str(tag).strip()
+    }
     strategy_info = _strategy_info(title, body, kind)
     ai_extraction = extract_strategy_with_ai(title=title, kind=kind, source=source, body=body)
     enriched_title = ai_extraction.title if ai_extraction and ai_extraction.title else title
@@ -426,7 +674,7 @@ def _enriched_import(
         kind=kind,
         source=source,
         body=body,
-        tags=sorted({*base_tags, *generated_tags}),
+        tags=sorted({*base_tags, *generated_tags, *source_tags}),
         ai_tags=generated_tags,
         strategy_info=strategy_info,
         metadata=metadata,
@@ -487,6 +735,74 @@ def _import_bytes(raw: bytes, source: str, content_type: str) -> VaultImportRead
     if normalized_type == "text/html":
         return _html_import(raw, source, content_type)
     return _bytes_import(raw, source, content_type)
+
+
+def _source_url_for_document(document: SourceDocument) -> str:
+    metadata = document.source_metadata or {}
+    source = document.uri or str(metadata.get("source", ""))
+    return source.strip()
+
+
+def _document_needs_supported_refresh(document: SourceDocument) -> bool:
+    source = _source_url_for_document(document)
+    if not _arxiv_id_from_url(source):
+        return False
+
+    metadata = document.source_metadata or {}
+    source_details = metadata.get("source_details")
+    if not isinstance(source_details, dict) or source_details.get("provider") != "arxiv":
+        return True
+
+    title_is_placeholder = document.title == _fallback_title(source)
+    body_is_placeholder = (document.content_text or "").startswith("Uploaded pdf file:")
+    return title_is_placeholder or body_is_placeholder
+
+
+def _apply_import_to_document(document: SourceDocument, imported: VaultImportRead) -> None:
+    old_metadata = document.source_metadata or {}
+    strategy_dump = imported.strategy_info.model_dump() if imported.strategy_info else None
+    metadata = {
+        **old_metadata,
+        **imported.metadata,
+        "source": imported.source,
+        "tags": imported.tags,
+        "aiTags": imported.ai_tags,
+        "generated_tags": imported.ai_tags,
+        "technicalTags": imported.metadata.get("technical_tags", []),
+        "technicalProfile": imported.metadata.get("technical_profile", {}),
+        "strategy_info": strategy_dump,
+        "strategyInfo": strategy_dump,
+    }
+
+    document.title = imported.title
+    document.document_type = imported.kind
+    document.uri = imported.source if imported.source.startswith("http") else document.uri
+    document.content_text = imported.body
+    document.source_metadata = metadata
+
+
+def _refresh_document_if_supported(
+    db: Session,
+    *,
+    document: SourceDocument,
+    user_id: UUID,
+) -> bool:
+    if not _document_needs_supported_refresh(document):
+        return False
+
+    try:
+        imported = _arxiv_import(_source_url_for_document(document))
+    except (ET.ParseError, HTTPError, URLError, TimeoutError, ValueError):
+        return False
+
+    if imported is None:
+        return False
+
+    delete_source_learning(db, document_id=document.id, user_id=user_id)
+    _apply_import_to_document(document, imported)
+    db.flush()
+    learn_from_source_document(db, document=document, user_id=user_id)
+    return True
 
 
 def _document_read(document: SourceDocument) -> SourceDocumentRead:
@@ -581,6 +897,13 @@ def import_url(payload: VaultUrlImportRequest) -> VaultImportRead:
             detail="URL must start with http:// or https://.",
         )
 
+    try:
+        arxiv_import = _arxiv_import(payload.url)
+    except (ET.ParseError, HTTPError, URLError, TimeoutError, ValueError):
+        arxiv_import = None
+    if arxiv_import:
+        return arxiv_import
+
     request = Request(
         payload.url,
         headers={"User-Agent": "QuantLabsVaultImporter/0.1 (+local-first research vault)"},
@@ -638,6 +961,14 @@ def create_document(
         content_text=payload.content_text,
         source_metadata=payload.metadata,
     )
+    if _document_needs_supported_refresh(document):
+        try:
+            imported = _arxiv_import(_source_url_for_document(document))
+        except (ET.ParseError, HTTPError, URLError, TimeoutError, ValueError):
+            imported = None
+        if imported:
+            _apply_import_to_document(document, imported)
+
     db.add(document)
     db.flush()
     learn_from_source_document(db, document=document, user_id=user_id)
@@ -656,6 +987,14 @@ def list_documents(
         .where(SourceDocument.user_id == user_id)
         .order_by(SourceDocument.created_at.desc())
     ).all()
+    refreshed = [
+        _refresh_document_if_supported(db, document=document, user_id=user_id)
+        for document in documents
+    ]
+    if any(refreshed):
+        db.commit()
+        for document in documents:
+            db.refresh(document)
     return [_document_read(document) for document in documents]
 
 

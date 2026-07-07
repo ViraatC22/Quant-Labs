@@ -11,6 +11,10 @@ Date: 2026-07-06
 - Kept local semantic extraction as the default. Vault source text is not sent
   to cloud providers unless `AI_ENRICHMENT_MODE=auto` and a provider key are set.
 - Extended import metadata with `enrichment_method` and `ai_router` details.
+- Added arXiv PDF link resolution: `/pdf/...` imports are converted through
+  arXiv metadata into paper title, authors, abstract, subject, comments,
+  implementation notes, and source details. Existing arXiv placeholders are
+  backfilled and relearned when documents are listed.
 - Blended imported strategy sources into the strategy scoreboard, insights, and
   graph. Sources can now create research-only strategy candidates or attach to
   existing strategies by overlapping strategy/setup/tag labels.
