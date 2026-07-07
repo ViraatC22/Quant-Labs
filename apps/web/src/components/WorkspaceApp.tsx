@@ -94,6 +94,21 @@ type TradingInsight = {
   tone: "good" | "warn" | "bad" | "neutral";
 };
 
+type RoutineBlock = {
+  title: string;
+  items: string[];
+};
+
+type RecommendedRoutine = {
+  strategyName: string;
+  sourceCount: number;
+  confidence: number;
+  validationState: StrategyStat["validationState"] | "draft";
+  setupFocus: string;
+  technicalTags: string[];
+  blocks: RoutineBlock[];
+};
+
 type GraphNodeType =
   | "memory"
   | "strategy"
@@ -129,6 +144,14 @@ type GraphEdge = {
 type GraphModel = {
   nodes: PositionedGraphNode[];
   edges: GraphEdge[];
+};
+
+type GraphClusterGuide = {
+  label: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
 };
 
 type SourceStrategySignal = {
@@ -178,7 +201,7 @@ const tabs: Array<{ key: TabKey; label: string; icon: typeof BookMarked }> = [
   { key: "journal", label: "Journal", icon: CalendarCheck },
   { key: "trades", label: "Trades", icon: LineChart },
   { key: "insights", label: "Insights", icon: BrainCircuit },
-  { key: "graph", label: "Map", icon: GitBranch }
+  { key: "graph", label: "Atlas", icon: GitBranch }
 ];
 
 const emptyState: WorkspaceState = {
@@ -186,6 +209,17 @@ const emptyState: WorkspaceState = {
   journal: [],
   trades: []
 };
+
+const graphClusterGuides: GraphClusterGuide[] = [
+  { label: "Source Evidence", x: 24, y: 42, width: 196, height: 248 },
+  { label: "Strategy Layer", x: 250, y: 42, width: 190, height: 248 },
+  { label: "Execution Setups", x: 490, y: 42, width: 190, height: 248 },
+  { label: "Trade Outcomes", x: 724, y: 42, width: 172, height: 248 },
+  { label: "Journal Routine", x: 24, y: 354, width: 196, height: 156 },
+  { label: "Tags", x: 250, y: 354, width: 190, height: 156 },
+  { label: "States", x: 490, y: 354, width: 190, height: 156 },
+  { label: "Markets", x: 724, y: 354, width: 172, height: 156 }
+];
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const textLikeExtensions = [".txt", ".md", ".markdown", ".csv", ".json", ".log", ".pine", ".py"];
@@ -1005,6 +1039,17 @@ export function WorkspaceApp() {
         tradeRecommendations
       ),
     [aiRouterStatus, sourceStrategySignals, strategyStats, tradeRecommendations, viewState]
+  );
+  const recommendedRoutine = useMemo(
+    () =>
+      buildRecommendedRoutine(
+        viewState,
+        strategyStats,
+        sourceStrategySignals,
+        optimalStrategy,
+        tradeRecommendations
+      ),
+    [optimalStrategy, sourceStrategySignals, strategyStats, tradeRecommendations, viewState]
   );
   const graph = useMemo(
     () => buildGraphModel(viewState, sourceStrategySignals, strategyStats),
@@ -2272,6 +2317,7 @@ export function WorkspaceApp() {
                     <InsightCard insight={insight} key={insight.title} />
                   ))}
                 </div>
+                <RoutinePlaybookCard routine={recommendedRoutine} />
                 {optimalStrategy && (
                   <div className="mt-4">
                     <StrategyEvaluationCard
@@ -2353,7 +2399,7 @@ export function WorkspaceApp() {
               <section className="rounded-lg border border-line bg-card/86 p-4 shadow-panel">
                 <div className="flex items-center justify-between gap-4">
                   <div>
-                    <h2 className="text-base font-semibold text-ink">Obsidian Map</h2>
+                    <h2 className="text-base font-semibold text-ink">Strategy Atlas</h2>
                     <p className="mt-1 text-sm text-ink/58">
                       {graph.nodes.length} nodes / {graph.edges.length} edges
                     </p>
@@ -2396,7 +2442,7 @@ export function WorkspaceApp() {
 
                 <div className="mt-5 overflow-hidden rounded-lg border border-ink/10 bg-[#171a1d]">
                   <svg
-                    aria-label="Trading relationship map"
+                    aria-label="Trading relationship atlas"
                     className="h-[520px] w-full cursor-grab touch-none active:cursor-grabbing"
                     onPointerDown={(event) => {
                       if ((event.target as Element).closest("[data-graph-node='true']")) return;
@@ -2417,6 +2463,32 @@ export function WorkspaceApp() {
                     viewBox={graphViewBox}
                   >
                     <rect fill="#171a1d" height="3000" width="3000" x="-1040" y="-1220" />
+                    {graphClusterGuides.map((guide) => (
+                      <g key={guide.label}>
+                        <rect
+                          fill="#f7f3ea"
+                          height={guide.height}
+                          opacity="0.035"
+                          rx="14"
+                          stroke="#d8d1c3"
+                          strokeDasharray="6 8"
+                          strokeOpacity="0.18"
+                          width={guide.width}
+                          x={guide.x}
+                          y={guide.y}
+                        />
+                        <text
+                          fill="#d8d1c3"
+                          fontSize="11"
+                          fontWeight={700}
+                          opacity="0.48"
+                          x={guide.x + 14}
+                          y={guide.y + 22}
+                        >
+                          {guide.label}
+                        </text>
+                      </g>
+                    ))}
                     {graph.edges.map((edge) => {
                       const from = graphNodeLookup.get(edge.from);
                       const to = graphNodeLookup.get(edge.to);
@@ -2717,6 +2789,45 @@ function InsightCard({ insight }: { insight: TradingInsight }) {
         {insight.value}
       </p>
       <p className="mt-3 text-sm leading-6 text-ink/66">{insight.detail}</p>
+    </article>
+  );
+}
+
+function RoutinePlaybookCard({ routine }: { routine: RecommendedRoutine }) {
+  return (
+    <article className="mt-4 rounded-lg border border-signal/25 bg-signal/5 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/48">
+            Recommended Routine
+          </p>
+          <h3 className="mt-2 text-base font-semibold text-ink">{routine.strategyName}</h3>
+          <p className="mt-1 text-sm text-ink/58">
+            {routine.setupFocus} / {routine.sourceCount} source{routine.sourceCount === 1 ? "" : "s"} /{" "}
+            {Math.round(routine.confidence * 100)}% confidence
+          </p>
+        </div>
+        <Badge variant={routine.validationState === "live" ? "secondary" : "default"}>
+          {routine.validationState}
+        </Badge>
+      </div>
+      {routine.technicalTags.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {essentialTechnicalTags(routine.technicalTags, 7).map(tagChip)}
+        </div>
+      )}
+      <div className="mt-4 grid gap-3 lg:grid-cols-2">
+        {routine.blocks.map((block) => (
+          <section className="rounded-md border border-line bg-card/76 p-3" key={block.title}>
+            <h4 className="text-sm font-semibold text-ink">{block.title}</h4>
+            <ul className="mt-2 grid gap-2 text-sm leading-6 text-ink/66">
+              {block.items.slice(0, 3).map((item) => (
+                <li key={item}>{compactText(item, 150)}</li>
+              ))}
+            </ul>
+          </section>
+        ))}
+      </div>
     </article>
   );
 }
@@ -3076,6 +3187,129 @@ function buildLocalStrategyEvaluation(
       notes: `${decision} local evaluation. Tags: ${tags.slice(0, 6).join(", ")}.`
     }
   };
+}
+
+function buildRecommendedRoutine(
+  state: WorkspaceState,
+  strategyStats: StrategyStat[],
+  sourceSignals: SourceStrategySignal[],
+  optimalStrategy: StrategyEvaluation | null,
+  tradeRecommendations: TradeRecommendation[]
+): RecommendedRoutine {
+  const primaryStat =
+    strategyStats.find((stat) => stat.validationState === "mixed") ??
+    strategyStats.find((stat) => stat.sourceCount > 0) ??
+    strategyStats[0];
+  const leadingRecommendation = tradeRecommendations[0];
+  const strategyName =
+    primaryStat?.name ??
+    optimalStrategy?.title ??
+    leadingRecommendation?.strategy ??
+    leadingRecommendation?.title ??
+    "Knowledge-base routine";
+  const relatedSignals = primaryStat
+    ? sourceSignals.filter((signal) => labelsOverlap(signal.strategyName, primaryStat.name))
+    : sourceSignals;
+  const signalPool = relatedSignals.length ? relatedSignals : sourceSignals;
+  const sourceCount = primaryStat?.sourceCount ?? signalPool.length;
+  const setupFocus =
+    primaryStat?.setups[0] ??
+    optimalStrategy?.draft.setup ??
+    leadingRecommendation?.setup ??
+    signalPool.find((signal) => signal.setup)?.setup ??
+    "Source-backed setup";
+  const technicalTags = uniqueTags([
+    ...(primaryStat?.setups ?? []),
+    ...(signalPool.flatMap((signal) => [...signal.tags, ...signal.attributes]) ?? []),
+    ...(optimalStrategy?.technical_tags ?? []),
+    ...(leadingRecommendation?.technical_tags ?? [])
+  ]);
+  const rules = uniqueTags(signalPool.flatMap((signal) => signal.rules));
+  const entryRules = preferredRoutineRules(
+    rules,
+    ["entry", "enter", "trigger", "break", "reclaim", "confirmation", "align", "long", "short"],
+    [
+      `Wait for ${setupFocus} conditions to align before opening a paper trade.`,
+      "Use the live quote ticket only after direction, size, and invalidation are clear."
+    ]
+  );
+  const exitRules = preferredRoutineRules(
+    rules,
+    ["exit", "target", "take profit", "profit", "sell", "cover", "trail"],
+    ["Predefine the target or management rule before entry."]
+  );
+  const riskRules = preferredRoutineRules(
+    rules,
+    ["risk", "stop", "invalidation", "max loss", "position size", "size", "atr"],
+    ["Size down when the setup is not directly supported by learned source evidence."]
+  );
+  const journalCount = state.journal.length;
+  const routineDays = state.journal.filter((entry) => entry.routineDone).length;
+  const validationState = primaryStat?.validationState ?? (sourceCount ? "research" : "draft");
+  const confidence =
+    primaryStat?.researchConfidence ||
+    optimalStrategy?.confidence ||
+    leadingRecommendation?.confidence ||
+    (sourceCount ? 0.48 : 0.28);
+
+  return {
+    strategyName,
+    sourceCount,
+    confidence: Math.min(0.95, Math.max(0.05, confidence)),
+    validationState,
+    setupFocus,
+    technicalTags,
+    blocks: [
+      {
+        title: "Routine",
+        items: [
+          `Start with ${strategyName}; review the source-backed setup before scanning.`,
+          technicalTags.length
+            ? `Mark the key technicals: ${essentialTechnicalTags(technicalTags, 5).join(", ")}.`
+            : "Mark trend, support/resistance, volatility, and session context.",
+          journalCount
+            ? `${routineDays}/${journalCount} journal entries are marked routine complete; keep logging pre-trade state.`
+            : "Create a journal entry before trading and mark whether the routine was completed."
+        ]
+      },
+      {
+        title: "How To Trade",
+        items: [
+          primaryStat?.count
+            ? `Favor the validated side of ${strategyName}: ${primaryStat.count} logged trade(s), ${primaryStat.winRate}% win rate.`
+            : `Treat ${strategyName} as research until more closed trades validate it.`,
+          leadingRecommendation?.action ?? `Trade only when ${setupFocus} matches the learned source rules.`,
+          "Use paper orders first; promote sizing only after journal and closed-trade evidence improve."
+        ]
+      },
+      {
+        title: "Setup To Look For",
+        items: [
+          setupFocus,
+          primaryStat?.symbols.length
+            ? `Most relevant symbols: ${primaryStat.symbols.slice(0, 4).join(", ")}.`
+            : "Pick the symbol whose market and timeframe match the extracted strategy.",
+          signalPool[0]?.summary ?? optimalStrategy?.rationale ?? "Prefer clear alignment over isolated indicators."
+        ]
+      },
+      {
+        title: "When To Execute",
+        items: entryRules
+      },
+      {
+        title: "Risk And Review",
+        items: [...riskRules.slice(0, 2), ...exitRules.slice(0, 1), "After closing, journal whether the setup, state, and execution matched the plan."]
+      }
+    ]
+  };
+}
+
+function preferredRoutineRules(rules: string[], needles: string[], fallback: string[], limit = 3) {
+  const matched = rules.filter((rule) => {
+    const lowered = rule.toLowerCase();
+    return needles.some((needle) => lowered.includes(needle));
+  });
+  return uniqueTags([...matched, ...fallback]).slice(0, limit);
 }
 
 function buildTradingInsights(
@@ -3572,28 +3806,30 @@ function graphId(type: GraphNodeType, value: string) {
 }
 
 function positionGraphNodes(nodes: GraphNode[]): PositionedGraphNode[] {
-  const centerX = 460;
-  const centerY = 280;
-  const config: Record<GraphNodeType, { radius: number; offset: number }> = {
-    memory: { radius: 0, offset: 0 },
-    strategy: { radius: 112, offset: -0.8 },
-    trade: { radius: 176, offset: 0.15 },
-    symbol: { radius: 238, offset: -1.2 },
-    setup: { radius: 232, offset: 0.72 },
-    emotion: { radius: 144, offset: 1.8 },
-    source: { radius: 216, offset: 2.7 },
-    journal: { radius: 198, offset: -2.7 },
-    tag: { radius: 248, offset: 2.05 }
+  const layout: Record<
+    GraphNodeType,
+    { x: number; y: number; columns: number; colGap: number; rowGap: number }
+  > = {
+    memory: { x: 460, y: 318, columns: 1, colGap: 0, rowGap: 0 },
+    source: { x: 122, y: 168, columns: 2, colGap: 90, rowGap: 56 },
+    strategy: { x: 345, y: 168, columns: 2, colGap: 88, rowGap: 56 },
+    setup: { x: 585, y: 168, columns: 2, colGap: 88, rowGap: 56 },
+    trade: { x: 810, y: 168, columns: 2, colGap: 76, rowGap: 56 },
+    journal: { x: 122, y: 432, columns: 2, colGap: 90, rowGap: 50 },
+    tag: { x: 345, y: 432, columns: 2, colGap: 88, rowGap: 50 },
+    emotion: { x: 585, y: 432, columns: 2, colGap: 88, rowGap: 50 },
+    symbol: { x: 810, y: 432, columns: 2, colGap: 76, rowGap: 50 }
   };
   const types: GraphNodeType[] = [
-    "strategy",
-    "trade",
-    "symbol",
-    "setup",
-    "emotion",
+    "memory",
     "source",
+    "strategy",
+    "setup",
+    "trade",
     "journal",
-    "tag"
+    "tag",
+    "emotion",
+    "symbol"
   ];
   const order = new Map<string, { index: number; total: number }>();
 
@@ -3606,18 +3842,24 @@ function positionGraphNodes(nodes: GraphNode[]): PositionedGraphNode[] {
 
   return nodes.map((node) => {
     if (node.type === "memory") {
-      return { ...node, x: centerX, y: centerY };
+      return { ...node, x: layout.memory.x, y: layout.memory.y };
     }
 
     const nodeOrder = order.get(node.id) ?? { index: 0, total: 1 };
-    const nodeConfig = config[node.type];
-    const angle = nodeConfig.offset + (Math.PI * 2 * nodeOrder.index) / Math.max(1, nodeOrder.total);
-    const radius = Math.min(252, nodeConfig.radius + Math.min(18, nodeOrder.total * 0.45));
+    const nodeLayout = layout[node.type];
+    const columns = Math.max(1, Math.min(nodeLayout.columns, nodeOrder.total));
+    const rows = Math.ceil(nodeOrder.total / columns);
+    const row = Math.floor(nodeOrder.index / columns);
+    const column = nodeOrder.index % columns;
+    const rowGap = Math.max(42, nodeLayout.rowGap - Math.max(0, rows - 3) * 3);
+    const columnOffset = (column - (columns - 1) / 2) * nodeLayout.colGap;
+    const rowOffset = (row - (rows - 1) / 2) * rowGap;
+    const stagger = rows > 2 && column % 2 === 1 ? rowGap * 0.18 : 0;
 
     return {
       ...node,
-      x: centerX + Math.cos(angle) * radius,
-      y: centerY + Math.sin(angle) * radius
+      x: nodeLayout.x + columnOffset,
+      y: nodeLayout.y + rowOffset + stagger
     };
   });
 }

@@ -72,6 +72,13 @@ Follow-up: 2026-07-07
   It assigns technical tags/profile, scores whether the idea is beneficial,
   observational, or edge-weakening, returns included/excluded reasons, produces
   a trade draft, and writes the evaluation into the journal by default.
+- Renamed the graph UI from the copyright-sensitive map label to Strategy
+  Atlas.
+- Replaced the circular atlas layout with spaced source, strategy, setup,
+  trade, journal, tag, state, and market groups.
+- Added a recommended routine card that derives how to trade, what setup to
+  look for, when to execute, and risk/review steps from extracted strategy
+  rules and the current knowledge base.
 - Updated README and environment docs.
 
 ## Verification
@@ -137,6 +144,16 @@ All passed. Local server checks confirmed:
 - `GET /health` returns `{"status":"ok","service":"api","environment":"local"}`.
 - `GET /api/v1/trades/quotes/AAPL` returns a delayed `yahoo_chart` quote.
 - The Next dev server responds at `http://localhost:3000/`.
+
+Re-run on 2026-07-07 after Strategy Atlas and routine-playbook work:
+
+```bash
+npm --prefix apps/web run typecheck
+npm --prefix apps/web run lint
+```
+
+Both passed. Local server check confirmed `http://localhost:3000/` returns 200
+and serves the renamed `Atlas` tab.
 
 ## AI Router Notes
 
