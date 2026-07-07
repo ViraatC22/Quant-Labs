@@ -35,6 +35,7 @@ import type {
   JournalEntry,
   MarketQuote,
   SourceDetails,
+  TradeAssetClass,
   StrategyEvaluation,
   TradeEntry,
   TradeRecommendation,
@@ -180,10 +181,29 @@ type GraphDragState = {
 
 type QuickTradeDraft = {
   symbol: string;
+  assetClass?: TradeAssetClass;
+  quoteSymbol?: string | null;
   side: TradeEntry["side"];
   entryDate: string;
   entryPrice: number;
   exitPrice: number | null;
+  contractMultiplier?: number | null;
+  riskAmount?: number | null;
+  stopPrice?: number | null;
+  targetPrice?: number | null;
+  timeframe?: string | null;
+  session?: string | null;
+  exchange?: string | null;
+  expirationDate?: string | null;
+  optionType?: "call" | "put" | string | null;
+  strikePrice?: number | null;
+  underlyingSymbol?: string | null;
+  delta?: number | null;
+  impliedVolatility?: number | null;
+  futuresContract?: string | null;
+  tickSize?: number | null;
+  tickValue?: number | null;
+  leverage?: number | null;
   quantity: number;
   fees: number;
   strategy: string;
@@ -238,6 +258,30 @@ const semanticTagRules = [
   ["risk reward", "risk-reward"],
   ["position size", "position-sizing"]
 ] as const;
+
+const tradeAssetClassOptions: Array<{ value: TradeAssetClass; label: string }> = [
+  { value: "equity", label: "Stock / ETF" },
+  { value: "option", label: "Option" },
+  { value: "future", label: "Future" },
+  { value: "crypto", label: "Crypto" },
+  { value: "forex", label: "Forex" }
+];
+
+const futuresSymbolDefaults: Record<string, { multiplier: number; tickSize: number; tickValue: number }> = {
+  ES: { multiplier: 50, tickSize: 0.25, tickValue: 12.5 },
+  MES: { multiplier: 5, tickSize: 0.25, tickValue: 1.25 },
+  NQ: { multiplier: 20, tickSize: 0.25, tickValue: 5 },
+  MNQ: { multiplier: 2, tickSize: 0.25, tickValue: 0.5 },
+  YM: { multiplier: 5, tickSize: 1, tickValue: 5 },
+  MYM: { multiplier: 0.5, tickSize: 1, tickValue: 0.5 },
+  RTY: { multiplier: 50, tickSize: 0.1, tickValue: 5 },
+  M2K: { multiplier: 5, tickSize: 0.1, tickValue: 0.5 },
+  CL: { multiplier: 1000, tickSize: 0.01, tickValue: 10 },
+  GC: { multiplier: 100, tickSize: 0.1, tickValue: 10 },
+  SI: { multiplier: 5000, tickSize: 0.005, tickValue: 25 },
+  ZB: { multiplier: 1000, tickSize: 0.03125, tickValue: 31.25 },
+  ZN: { multiplier: 1000, tickSize: 0.015625, tickValue: 15.625 }
+};
 const singleWordTags = [
   "atr",
   "backtest",
@@ -429,6 +473,69 @@ function quotePrice(quote: MarketQuote | undefined) {
   return Number.isFinite(price) ? price : null;
 }
 
+function normalizeAssetClass(value: unknown): TradeAssetClass {
+  const normalized = String(value ?? "").toLowerCase().trim();
+  if (["option", "options", "opt"].includes(normalized)) return "option";
+  if (["future", "futures", "fut"].includes(normalized)) return "future";
+  if (["crypto", "coin", "digital asset"].includes(normalized)) return "crypto";
+  if (["forex", "fx", "currency"].includes(normalized)) return "forex";
+  return "equity";
+}
+
+function formatAssetClass(value: unknown) {
+  const assetClass = normalizeAssetClass(value);
+  return tradeAssetClassOptions.find((option) => option.value === assetClass)?.label ?? "Stock / ETF";
+}
+
+function assetClassForText(...values: string[]) {
+  const text = values.join(" ").toLowerCase();
+  if (/\b(option|options|call|calls|put|puts|spread|straddle|strangle|covered call|iron condor)\b/.test(text)) {
+    return "option" as const;
+  }
+  if (/\b(future|futures|contract|tick value|tick size|\/?es\b|\/?mes\b|\/?nq\b|\/?mnq\b|\/?cl\b|\/?gc\b)\b/.test(text)) {
+    return "future" as const;
+  }
+  if (/\b(crypto|bitcoin|btc|ethereum|eth|solana|sol)\b/.test(text)) return "crypto" as const;
+  if (/\b(forex|fx|eurusd|gbpusd|usdjpy|audusd|currency pair)\b/.test(text)) return "forex" as const;
+  if (/\b(stock|stocks|equity|equities|etf|shares)\b/.test(text)) return "equity" as const;
+  return null;
+}
+
+function assetClassForSymbol(symbol: string, ...context: string[]) {
+  const normalized = symbol.replace(/^\//, "").toUpperCase();
+  const contextualClass = assetClassForText(symbol, ...context);
+  if (contextualClass) return contextualClass;
+  if (futuresSymbolDefaults[normalized]) return "future" as const;
+  if (["BTC", "ETH", "SOL", "DOGE", "ADA", "BTC-USD", "ETH-USD"].includes(normalized)) return "crypto" as const;
+  if (/^[A-Z]{6}$/.test(normalized) && ["USD", "EUR", "JPY", "GBP", "AUD", "CAD", "CHF"].some((ccy) => normalized.includes(ccy))) {
+    return "forex" as const;
+  }
+  return "equity" as const;
+}
+
+function defaultContractMultiplier(assetClass: TradeAssetClass, symbol: string) {
+  const normalized = symbol.replace(/^\//, "").toUpperCase();
+  if (assetClass === "option") return 100;
+  if (assetClass === "future") return futuresSymbolDefaults[normalized]?.multiplier ?? 1;
+  return 1;
+}
+
+function tradeContractMultiplier(trade: Pick<TradeEntry, "assetClass" | "symbol" | "contractMultiplier">) {
+  if (trade.contractMultiplier && trade.contractMultiplier > 0) return trade.contractMultiplier;
+  return defaultContractMultiplier(normalizeAssetClass(trade.assetClass), trade.symbol);
+}
+
+function quoteLookupSymbol(trade: Pick<TradeEntry, "symbol" | "quoteSymbol" | "futuresContract" | "underlyingSymbol">) {
+  return (trade.quoteSymbol || trade.futuresContract || trade.symbol || trade.underlyingSymbol || "").trim().toUpperCase();
+}
+
+function quoteLookupSymbolFromForm(form: FormData) {
+  const symbol = String(form.get("symbol") ?? "").trim().toUpperCase();
+  const quoteSymbol = String(form.get("quoteSymbol") ?? "").trim().toUpperCase();
+  const futuresContract = String(form.get("futuresContract") ?? "").trim().toUpperCase();
+  return quoteSymbol || futuresContract || symbol;
+}
+
 function isTradeClosed(trade: TradeEntry) {
   return trade.exitPrice !== null && trade.exitPrice !== undefined;
 }
@@ -441,7 +548,11 @@ function tradePnl(trade: TradeEntry) {
   const markPrice = tradeMarkPrice(trade);
   if (markPrice === null) return 0;
   const direction = trade.side === "long" ? 1 : -1;
-  return (markPrice - trade.entryPrice) * trade.quantity * direction - trade.fees;
+  return (markPrice - trade.entryPrice) * trade.quantity * tradeContractMultiplier(trade) * direction - trade.fees;
+}
+
+function tradeNotional(trade: TradeEntry) {
+  return trade.entryPrice * trade.quantity * tradeContractMultiplier(trade);
 }
 
 function targetPercentForTags(tags: string[]) {
@@ -467,6 +578,70 @@ function draftNumber(value: string | undefined) {
   if (!value) return undefined;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+function formText(form: FormData, name: string) {
+  return String(form.get(name) ?? "").trim();
+}
+
+function formUpper(form: FormData, name: string) {
+  return formText(form, name).toUpperCase();
+}
+
+function formNumber(form: FormData, name: string) {
+  const raw = formText(form, name);
+  if (!raw) return null;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function numberFieldValue(value: number | null | undefined) {
+  return value === null || value === undefined ? undefined : String(value);
+}
+
+function marketCompatibilityTags(values: Array<string | null | undefined>, includeOptionStatus = true) {
+  const text = values.filter(Boolean).join(" ").toLowerCase();
+  const detected: string[] = [];
+  if (/\b(option|options|call|calls|put|puts|spread|straddle|strangle|covered call|iron condor)\b/.test(text)) {
+    detected.push("options-ready");
+  }
+  if (/\b(future|futures|contract|es|mes|nq|mnq|ym|rty|cl|gc|tick value|tick size)\b/.test(text)) {
+    detected.push("futures-ready");
+  }
+  if (/\b(crypto|bitcoin|btc|ethereum|eth|solana|sol)\b/.test(text)) detected.push("crypto-ready");
+  if (/\b(forex|fx|currency pair|eurusd|gbpusd|usdjpy)\b/.test(text)) detected.push("forex-ready");
+  if (/\b(stock|stocks|equity|equities|etf|shares)\b/.test(text)) detected.push("equity-ready");
+  if (includeOptionStatus && !detected.includes("options-ready")) detected.unshift("not options-specific");
+  return uniqueTags(detected.length ? detected : ["general market"]);
+}
+
+function advancedTradeFieldsFromForm(form: FormData, symbol: string): Partial<TradeEntry> {
+  const context = [formText(form, "strategy"), formText(form, "setup"), formText(form, "notes")];
+  const assetClass = normalizeAssetClass(formText(form, "assetClass") || assetClassForSymbol(symbol, ...context));
+  const futuresContract = formUpper(form, "futuresContract");
+  const futureDefaults = assetClass === "future" ? futuresSymbolDefaults[(futuresContract || symbol).replace(/^\//, "")] : undefined;
+  const quoteSymbol = quoteLookupSymbolFromForm(form);
+  return {
+    assetClass,
+    quoteSymbol: quoteSymbol && quoteSymbol !== symbol ? quoteSymbol : null,
+    contractMultiplier: formNumber(form, "contractMultiplier") ?? defaultContractMultiplier(assetClass, symbol),
+    riskAmount: formNumber(form, "riskAmount"),
+    stopPrice: formNumber(form, "stopPrice"),
+    targetPrice: formNumber(form, "targetPrice"),
+    timeframe: formText(form, "timeframe") || null,
+    session: formText(form, "session") || null,
+    exchange: formText(form, "exchange") || null,
+    expirationDate: formText(form, "expirationDate") || null,
+    optionType: formText(form, "optionType") || null,
+    strikePrice: formNumber(form, "strikePrice"),
+    underlyingSymbol: formUpper(form, "underlyingSymbol") || null,
+    delta: formNumber(form, "delta"),
+    impliedVolatility: formNumber(form, "impliedVolatility"),
+    futuresContract: futuresContract || null,
+    tickSize: formNumber(form, "tickSize") ?? futureDefaults?.tickSize ?? null,
+    tickValue: formNumber(form, "tickValue") ?? futureDefaults?.tickValue ?? null,
+    leverage: formNumber(form, "leverage")
+  };
 }
 
 function Field({
@@ -859,6 +1034,7 @@ export function WorkspaceApp() {
   const [vaultUrl, setVaultUrl] = useState("");
   const [quickTradeText, setQuickTradeText] = useState("");
   const [quickTradeMessage, setQuickTradeMessage] = useState("Paste one line like: AAPL long 100 x10 strategy VWAP setup ORB.");
+  const [tradeAssetClass, setTradeAssetClass] = useState<TradeAssetClass>("equity");
   const [importStatus, setImportStatus] = useState<{
     tone: "idle" | "loading" | "success" | "error";
     message: string;
@@ -946,20 +1122,27 @@ export function WorkspaceApp() {
     const symbols = uniqueTags(
       state.trades
         .filter((trade) => !isTradeClosed(trade))
-        .map((trade) => trade.symbol)
+        .map((trade) => quoteLookupSymbol(trade))
+        .filter(Boolean)
     );
     if (!symbols.length) return;
 
     let cancelled = false;
     async function refreshQuotes() {
       const quotes = await Promise.all(
-        symbols.map((symbol) => api.getQuote(symbol).catch(() => null))
+        symbols.map(async (symbol) => ({
+          symbol,
+          quote: await api.getQuote(symbol).catch(() => null)
+        }))
       );
       if (cancelled) return;
       setQuoteBySymbol((current) => {
         const next = { ...current };
-        quotes.forEach((quote) => {
-          if (quote) next[quote.symbol] = quote;
+        quotes.forEach(({ symbol, quote }) => {
+          if (quote) {
+            next[symbol] = quote;
+            next[quote.symbol] = quote;
+          }
         });
         return next;
       });
@@ -977,7 +1160,8 @@ export function WorkspaceApp() {
     () =>
       state.trades.map((trade) => {
         if (isTradeClosed(trade)) return trade;
-        const quote = quoteBySymbol[trade.symbol];
+        const lookupSymbol = quoteLookupSymbol(trade);
+        const quote = quoteBySymbol[lookupSymbol] ?? quoteBySymbol[trade.symbol];
         const currentPrice = quotePrice(quote);
         return {
           ...trade,
@@ -1006,7 +1190,7 @@ export function WorkspaceApp() {
   );
 
   const openPaperNotional = useMemo(
-    () => openPaperTrades.reduce((sum, trade) => sum + trade.entryPrice * trade.quantity, 0),
+    () => openPaperTrades.reduce((sum, trade) => sum + tradeNotional(trade), 0),
     [openPaperTrades]
   );
 
@@ -1211,16 +1395,29 @@ export function WorkspaceApp() {
   async function enrichDraftWithQuote(draft: TradeDraft, tags: string[]) {
     const symbol = draft.symbol?.trim().toUpperCase();
     if (!symbol) return draft;
+    const assetClass = normalizeAssetClass(
+      draft.asset_class ?? assetClassForSymbol(symbol, draft.strategy ?? "", draft.setup ?? "", draft.notes ?? "", ...tags)
+    );
+    const quoteSymbol = (draft.quote_symbol || draft.futures_contract || symbol).trim().toUpperCase();
     const side = draft.side ?? "long";
     const fallbackEntry = draftNumber(draft.entry_price);
     const fallbackExit = draftNumber(draft.exit_price);
+    const baseDraft = {
+      ...draft,
+      asset_class: assetClass,
+      contract_multiplier: draft.contract_multiplier ?? String(defaultContractMultiplier(assetClass, symbol)),
+      quote_symbol: draft.quote_symbol ?? (assetClass === "future" ? symbol : undefined),
+      futures_contract: draft.futures_contract ?? (assetClass === "future" ? symbol : undefined),
+      underlying_symbol: draft.underlying_symbol ?? (assetClass === "option" ? symbol : undefined)
+    };
     try {
-      const quote = await api.getQuote(symbol);
-      setQuoteBySymbol((current) => ({ ...current, [quote.symbol]: quote }));
+      const quote = await api.getQuote(quoteSymbol);
+      setQuoteBySymbol((current) => ({ ...current, [quoteSymbol]: quote, [quote.symbol]: quote }));
       const entry = quotePrice(quote) ?? fallbackEntry;
       return {
-        ...draft,
-        symbol: quote.symbol,
+        ...baseDraft,
+        symbol,
+        quote_symbol: quoteSymbol === symbol ? draft.quote_symbol : quoteSymbol,
         entry_price: numberString(entry),
         exit_price: numberString(
           fallbackExit ?? (entry ? targetExitPrice(entry, side, tags) : undefined)
@@ -1230,7 +1427,7 @@ export function WorkspaceApp() {
       };
     } catch {
       return {
-        ...draft,
+        ...baseDraft,
         entry_price: numberString(fallbackEntry),
         exit_price: numberString(fallbackExit)
       };
@@ -1250,11 +1447,34 @@ export function WorkspaceApp() {
     };
 
     setQuickTradeText("");
+    const detectedAssetClass = normalizeAssetClass(
+      draft.asset_class ?? assetClassForSymbol(draft.symbol ?? "", draft.strategy ?? "", draft.setup ?? "", draft.notes ?? "")
+    );
+    setTradeAssetClass(detectedAssetClass);
     setField("symbol", draft.symbol);
+    setField("assetClass", detectedAssetClass);
+    setField("quoteSymbol", draft.quote_symbol);
     setField("side", draft.side);
     setField("entryDate", new Date().toISOString().slice(0, 10));
     setField("entryPrice", draft.entry_price);
     setField("exitPrice", draft.exit_price);
+    setField("contractMultiplier", draft.contract_multiplier);
+    setField("riskAmount", draft.risk_amount);
+    setField("stopPrice", draft.stop_price);
+    setField("targetPrice", draft.target_price ?? draft.exit_price);
+    setField("timeframe", draft.timeframe);
+    setField("session", draft.session);
+    setField("exchange", draft.exchange);
+    setField("expirationDate", draft.expiration_date);
+    setField("optionType", draft.option_type);
+    setField("strikePrice", draft.strike_price);
+    setField("underlyingSymbol", draft.underlying_symbol);
+    setField("delta", draft.delta);
+    setField("impliedVolatility", draft.implied_volatility);
+    setField("futuresContract", draft.futures_contract);
+    setField("tickSize", draft.tick_size);
+    setField("tickValue", draft.tick_value);
+    setField("leverage", draft.leverage);
     setField("strategy", draft.strategy);
     setField("setup", draft.setup);
     setField("emotion", draft.emotion);
@@ -1409,30 +1629,36 @@ export function WorkspaceApp() {
   async function fillTradePricesFromQuote() {
     const form = tradeFormRef.current;
     if (!form) return;
-    const symbol = String(new FormData(form).get("symbol") ?? "").trim().toUpperCase();
-    if (!symbol) {
+    const formData = new FormData(form);
+    const symbol = formUpper(formData, "symbol");
+    const lookupSymbol = quoteLookupSymbolFromForm(formData);
+    if (!lookupSymbol) {
       setQuickTradeMessage("Enter a symbol before asking for a live quote.");
       return;
     }
     try {
-      const quote = await api.getQuote(symbol);
-      setQuoteBySymbol((current) => ({ ...current, [quote.symbol]: quote }));
-      const side = String(new FormData(form).get("side") ?? "long") as TradeEntry["side"];
+      const quote = await api.getQuote(lookupSymbol);
+      setQuoteBySymbol((current) => ({ ...current, [lookupSymbol]: quote, [quote.symbol]: quote }));
+      const side = String(formData.get("side") ?? "long") as TradeEntry["side"];
       const tags = uniqueTags([
-        String(new FormData(form).get("setup") ?? ""),
-        String(new FormData(form).get("strategy") ?? "")
+        String(formData.get("setup") ?? ""),
+        String(formData.get("strategy") ?? "")
       ]);
       const entry = quotePrice(quote);
       const exit = entry ? targetExitPrice(entry, side, tags) : null;
       if (entry) {
         const entryField = form.elements.namedItem("entryPrice");
         const exitField = form.elements.namedItem("exitPrice");
+        const targetField = form.elements.namedItem("targetPrice");
+        const quoteField = form.elements.namedItem("quoteSymbol");
         if (entryField instanceof HTMLInputElement) entryField.value = String(entry);
         if (exitField instanceof HTMLInputElement && exit) exitField.value = String(exit);
+        if (targetField instanceof HTMLInputElement && exit) targetField.value = String(exit);
+        if (quoteField instanceof HTMLInputElement && lookupSymbol !== symbol) quoteField.value = lookupSymbol;
       }
       setQuickTradeMessage(`Fetched ${quote.symbol} at ${formatCurrency(Number(quote.last_price))}.`);
     } catch {
-      setQuickTradeMessage("Live quote is unavailable for that symbol right now.");
+      setQuickTradeMessage("Live quote is unavailable for that symbol or contract right now.");
     }
   }
 
@@ -1489,28 +1715,38 @@ export function WorkspaceApp() {
     if (!formEl) return;
 
     const form = new FormData(formEl);
-    const symbol = String(form.get("symbol") ?? "").trim().toUpperCase();
-    const quantity = Number(form.get("quantity"));
+    const symbol = formUpper(form, "symbol") || formUpper(form, "quoteSymbol");
+    const quantity = formNumber(form, "quantity");
     if (!symbol || !quantity) {
       setQuickTradeMessage("Enter a symbol and quantity before placing a live paper trade.");
       return;
     }
 
-    setQuickTradeMessage(`Fetching a live paper fill for ${symbol}...`);
+    const advancedFields = advancedTradeFieldsFromForm(form, symbol);
+    const lookupSymbol = quoteLookupSymbol({
+      symbol,
+      quoteSymbol: advancedFields.quoteSymbol,
+      futuresContract: advancedFields.futuresContract,
+      underlyingSymbol: advancedFields.underlyingSymbol
+    });
+
+    setQuickTradeMessage(`Fetching a live paper fill for ${lookupSymbol}...`);
     try {
-      const quote = await api.getQuote(symbol);
+      const quote = await api.getQuote(lookupSymbol);
       const entryPrice = quotePrice(quote);
       if (entryPrice === null) throw new Error("missing quote");
 
       const side = String(form.get("side") ?? "long") as TradeEntry["side"];
       const quoteTime = quote.market_time ?? new Date().toISOString();
       const rawNotes = String(form.get("notes") ?? "").trim();
-      const executionNote = `Paper market order opened at ${formatCurrency(entryPrice)} from ${quote.provider}${
+      const executionNote = `${formatAssetClass(advancedFields.assetClass)} paper market order opened at ${formatCurrency(entryPrice)} from ${quote.provider}${
         quote.market_time ? ` (${quote.market_time})` : ""
       }.`;
       const trade: TradeEntry = {
         id: newId(),
-        symbol: quote.symbol,
+        symbol,
+        ...advancedFields,
+        quoteSymbol: lookupSymbol !== symbol ? lookupSymbol : advancedFields.quoteSymbol,
         side,
         entryDate: String(form.get("entryDate") || quoteTime.slice(0, 10)),
         entryPrice,
@@ -1530,8 +1766,9 @@ export function WorkspaceApp() {
         createdAt: new Date().toISOString()
       };
 
-      setQuoteBySymbol((current) => ({ ...current, [quote.symbol]: quote }));
+      setQuoteBySymbol((current) => ({ ...current, [lookupSymbol]: quote, [quote.symbol]: quote }));
       formEl.reset();
+      setTradeAssetClass("equity");
       setQuickTradeText("");
       setQuickTradeMessage(
         `Placed paper ${trade.side} ${trade.symbol} x${trade.quantity} at ${formatCurrency(entryPrice)}.`
@@ -1561,6 +1798,7 @@ export function WorkspaceApp() {
       };
 
       formEl.reset();
+      setTradeAssetClass("equity");
       setQuickTradeText("");
       setQuickTradeMessage(
         isTradeClosed(trade)
@@ -1571,19 +1809,20 @@ export function WorkspaceApp() {
       return;
     }
 
-    const symbol = String(form.get("symbol") ?? "").trim().toUpperCase();
-    const entryPrice = Number(form.get("entryPrice"));
-    const exitRaw = String(form.get("exitPrice") ?? "").trim();
-    const exitPrice = exitRaw ? Number(exitRaw) : null;
-    const quantity = Number(form.get("quantity"));
+    const symbol = formUpper(form, "symbol");
+    const entryPrice = formNumber(form, "entryPrice");
+    const exitPrice = formNumber(form, "exitPrice");
+    const quantity = formNumber(form, "quantity");
     if (!symbol || !entryPrice || !quantity) {
       setQuickTradeMessage("Use the quick line or fill symbol, entry, and quantity.");
       return;
     }
+    const advancedFields = advancedTradeFieldsFromForm(form, symbol);
 
     const trade: TradeEntry = {
       id: newId(),
       symbol,
+      ...advancedFields,
       side: String(form.get("side") ?? "long") as TradeEntry["side"],
       entryDate: String(form.get("entryDate") || new Date().toISOString().slice(0, 10)),
       entryPrice,
@@ -1598,6 +1837,7 @@ export function WorkspaceApp() {
     };
 
     formEl.reset();
+    setTradeAssetClass("equity");
     setQuickTradeText("");
     setQuickTradeMessage(
       isTradeClosed(trade)
@@ -1608,8 +1848,9 @@ export function WorkspaceApp() {
   }
 
   async function closeTradeAtLive(trade: TradeEntry) {
+    const lookupSymbol = quoteLookupSymbol(trade);
     try {
-      const quote = await api.getQuote(trade.symbol);
+      const quote = await api.getQuote(lookupSymbol);
       const exitPrice = quotePrice(quote);
       if (!exitPrice) throw new Error("missing quote");
       const updated = await api.updateTrade(trade.id, {
@@ -1619,7 +1860,7 @@ export function WorkspaceApp() {
         quoteProvider: quote.provider,
         quoteTime: quote.market_time
       });
-      setQuoteBySymbol((current) => ({ ...current, [quote.symbol]: quote }));
+      setQuoteBySymbol((current) => ({ ...current, [lookupSymbol]: quote, [quote.symbol]: quote }));
       setState((current) => ({
         ...current,
         trades: current.trades.map((item) => (item.id === trade.id ? updated : item))
@@ -2060,7 +2301,7 @@ export function WorkspaceApp() {
                         className={`${textareaClass()} min-h-24`}
                         name="quickTrade"
                         onChange={(event) => setQuickTradeText(event.target.value)}
-                        placeholder="AAPL long 100 x10 strategy VWAP setup ORB notes clean reclaim"
+                        placeholder="ES future long 5825 x1 stop 5818 target 5842 strategy VWAP setup ORB"
                         value={quickTradeText}
                       />
                     </Field>
@@ -2078,7 +2319,34 @@ export function WorkspaceApp() {
                   </div>
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Symbol">
-                      <input className={textInputClass()} name="symbol" />
+                      <input
+                        className={textInputClass()}
+                        name="symbol"
+                        onBlur={(event) => {
+                          if (tradeAssetClass === "equity") {
+                            setTradeAssetClass(assetClassForSymbol(event.target.value));
+                          }
+                        }}
+                      />
+                    </Field>
+                    <Field label="Asset">
+                      <select
+                        className={textInputClass()}
+                        name="assetClass"
+                        onChange={(event) => setTradeAssetClass(normalizeAssetClass(event.target.value))}
+                        value={tradeAssetClass}
+                      >
+                        {tradeAssetClassOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <Field label="Quote symbol">
+                      <input className={textInputClass()} name="quoteSymbol" placeholder="optional feed ticker" />
                     </Field>
                     <Field label="Side">
                       <select className={textInputClass()} name="side">
@@ -2121,6 +2389,98 @@ export function WorkspaceApp() {
                       <input className={textInputClass()} name="fees" step="0.01" type="number" />
                     </Field>
                   </div>
+                  <details className="rounded-lg border border-line bg-paper/45 p-3">
+                    <summary className="cursor-pointer text-sm font-semibold text-ink">
+                      Advanced parameters
+                    </summary>
+                    <div className="mt-3 grid gap-3">
+                      <div className="grid grid-cols-2 gap-3">
+                        <Field label="Multiplier">
+                          <input
+                            className={textInputClass()}
+                            name="contractMultiplier"
+                            placeholder={String(defaultContractMultiplier(tradeAssetClass, ""))}
+                            step="0.01"
+                            type="number"
+                          />
+                        </Field>
+                        <Field label="Risk $">
+                          <input className={textInputClass()} name="riskAmount" step="0.01" type="number" />
+                        </Field>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <Field label="Stop">
+                          <input className={textInputClass()} name="stopPrice" step="0.01" type="number" />
+                        </Field>
+                        <Field label="Target">
+                          <input className={textInputClass()} name="targetPrice" step="0.01" type="number" />
+                        </Field>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <Field label="Timeframe">
+                          <input className={textInputClass()} name="timeframe" placeholder="5m, daily" />
+                        </Field>
+                        <Field label="Session">
+                          <input className={textInputClass()} name="session" placeholder="RTH, London" />
+                        </Field>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <Field label="Exchange">
+                          <input className={textInputClass()} name="exchange" placeholder="NASDAQ, CME" />
+                        </Field>
+                        <Field label="Leverage">
+                          <input className={textInputClass()} name="leverage" step="0.01" type="number" />
+                        </Field>
+                      </div>
+
+                        <div className="grid gap-3 border-t border-line pt-3">
+                          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/45">Options</p>
+                          <div className="grid grid-cols-2 gap-3">
+                            <Field label="Underlying">
+                              <input className={textInputClass()} name="underlyingSymbol" placeholder="AAPL" />
+                            </Field>
+                            <Field label="Expiration">
+                              <input className={textInputClass()} name="expirationDate" type="date" />
+                            </Field>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <Field label="Type">
+                              <select className={textInputClass()} name="optionType">
+                                <option value="">Select</option>
+                                <option value="call">Call</option>
+                                <option value="put">Put</option>
+                              </select>
+                            </Field>
+                            <Field label="Strike">
+                              <input className={textInputClass()} name="strikePrice" step="0.01" type="number" />
+                            </Field>
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <Field label="Delta">
+                              <input className={textInputClass()} name="delta" step="0.01" type="number" />
+                            </Field>
+                            <Field label="IV %">
+                              <input className={textInputClass()} name="impliedVolatility" step="0.01" type="number" />
+                            </Field>
+                          </div>
+                        </div>
+
+                        <div className="grid gap-3 border-t border-line pt-3">
+                          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/45">Futures</p>
+                          <Field label="Contract">
+                            <input className={textInputClass()} name="futuresContract" placeholder="ES, MES, NQ" />
+                          </Field>
+                          <div className="grid grid-cols-2 gap-3">
+                            <Field label="Tick size">
+                              <input className={textInputClass()} name="tickSize" step="0.0001" type="number" />
+                            </Field>
+                            <Field label="Tick value">
+                              <input className={textInputClass()} name="tickValue" step="0.01" type="number" />
+                            </Field>
+                          </div>
+                        </div>
+                    </div>
+                  </details>
                   <Field label="Strategy">
                     <input className={textInputClass()} list="strategy-suggestions" name="strategy" placeholder="VWAP Pullback" />
                     <datalist id="strategy-suggestions">
@@ -2196,11 +2556,16 @@ export function WorkspaceApp() {
                             <div>
                               <div className="flex flex-wrap items-center gap-2">
                                 <span className="font-semibold text-ink">{trade.symbol}</span>
+                                <Badge variant="secondary">{normalizeAssetClass(trade.assetClass)}</Badge>
                                 <Badge variant="warning">{trade.side}</Badge>
                                 {trade.paperOrder && <Badge variant="outline">paper</Badge>}
                               </div>
                               <p className="mt-1 text-ink/58">
                                 {trade.strategy || "Untitled strategy"} / {trade.setup || "no setup"}
+                              </p>
+                              <p className="mt-1 text-xs font-medium text-ink/45">
+                                {quoteLookupSymbol(trade) !== trade.symbol ? `quote ${quoteLookupSymbol(trade)} / ` : ""}
+                                multiplier {tradeContractMultiplier(trade)}
                               </p>
                             </div>
                             <div className="text-ink/68 sm:text-right">
@@ -2313,78 +2678,15 @@ export function WorkspaceApp() {
                     {viewState.trades.filter(isTradeClosed).length} closed
                   </p>
                 </div>
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[900px] border-collapse text-left text-sm">
-                    <thead className="bg-paper text-xs uppercase text-ink/54">
-                      <tr>
-                        <th className="px-4 py-3">Date</th>
-                        <th className="px-4 py-3">Symbol</th>
-                        <th className="px-4 py-3">Side</th>
-                        <th className="px-4 py-3">Strategy</th>
-                        <th className="px-4 py-3">Entry</th>
-                        <th className="px-4 py-3">Mark</th>
-                        <th className="px-4 py-3">Qty</th>
-                        <th className="px-4 py-3">P&L</th>
-                        <th className="px-4 py-3">Status</th>
-                        <th className="px-4 py-3" />
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-line">
-                      {viewState.trades.map((trade) => {
-                        const pnl = tradePnl(trade);
-                        const closed = isTradeClosed(trade);
-                        const mark = tradeMarkPrice(trade);
-
-                        return (
-                          <tr key={trade.id}>
-                            <td className="px-4 py-3 text-ink/62">{trade.entryDate}</td>
-                            <td className="px-4 py-3 font-semibold text-ink">{trade.symbol}</td>
-                            <td className="px-4 py-3 capitalize text-ink/68">{trade.side}</td>
-                            <td className="px-4 py-3 text-ink/68">{trade.strategy || "Untitled"}</td>
-                            <td className="px-4 py-3 text-ink/68">{formatCurrency(trade.entryPrice)}</td>
-                            <td className="px-4 py-3 text-ink/68">
-                              {mark ? formatCurrency(mark) : "waiting quote"}
-                            </td>
-                            <td className="px-4 py-3 text-ink/68">{trade.quantity}</td>
-                            <td
-                              className={[
-                                "px-4 py-3 font-semibold",
-                                pnl >= 0 ? "text-moss" : "text-loss"
-                              ].join(" ")}
-                            >
-                              {formatCurrency(pnl)}
-                            </td>
-                            <td className="px-4 py-3 text-ink/68">
-                              <Badge variant={closed ? "secondary" : "warning"}>
-                                {closed ? "closed" : trade.paperOrder ? "paper open" : "open"}
-                              </Badge>
-                            </td>
-                            <td className="px-4 py-3">
-                              <div className="flex justify-end gap-1">
-                              {!closed && (
-                                <button
-                                  className="rounded-md px-2 py-1 text-xs font-semibold text-signal transition hover:bg-paper"
-                                  onClick={() => void closeTradeAtLive(trade)}
-                                  type="button"
-                                >
-                                  Close live
-                                </button>
-                              )}
-                              <button
-                                className="rounded-md p-2 text-ink/45 transition hover:bg-paper hover:text-loss"
-                                onClick={() => removeItem("trades", trade.id)}
-                                title="Delete"
-                                type="button"
-                              >
-                                <Trash2 aria-hidden="true" size={17} />
-                              </button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                <div className="divide-y divide-line">
+                  {viewState.trades.map((trade) => (
+                    <TradeLogDropdown
+                      key={trade.id}
+                      onClose={closeTradeAtLive}
+                      onDelete={(id) => removeItem("trades", id)}
+                      trade={trade}
+                    />
+                  ))}
                   {!state.trades.length && (
                     <div className="grid min-h-64 place-items-center p-6 text-center text-sm font-medium text-ink/55">
                       Trade log is empty
@@ -2530,50 +2832,65 @@ export function WorkspaceApp() {
                   <ShieldCheck aria-hidden="true" className="text-moss" size={20} strokeWidth={2.1} />
                 </div>
                 <div className="divide-y divide-line">
-                  {strategyStats.map((stat) => (
-                    <article key={stat.name} className="p-4">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <h3 className="text-sm font-semibold text-ink">{stat.name}</h3>
-                          <p className="mt-1 text-xs font-medium text-ink/52">
-                            {stat.count} trades / {stat.sourceCount} sources / {stat.winRate}% win rate
-                          </p>
+                  {strategyStats.map((stat) => {
+                    const compatibilityTags = marketCompatibilityTags([
+                      stat.name,
+                      stat.researchSummary,
+                      ...stat.symbols,
+                      ...stat.setups,
+                      ...stat.researchRules
+                    ]);
+
+                    return (
+                      <article key={stat.name} className="p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <h3 className="text-sm font-semibold text-ink">{stat.name}</h3>
+                            <p className="mt-1 text-xs font-medium text-ink/52">
+                              {stat.count} trades / {stat.sourceCount} sources / {stat.winRate}% win rate
+                            </p>
+                          </div>
+                          <span
+                            className={[
+                              "rounded-md px-2 py-1 text-xs font-semibold",
+                              stat.totalPnl >= 0 ? "bg-moss/10 text-moss" : "bg-loss/10 text-loss"
+                            ].join(" ")}
+                          >
+                            {formatCurrency(stat.totalPnl)}
+                          </span>
                         </div>
-                        <span
-                          className={[
-                            "rounded-md px-2 py-1 text-xs font-semibold",
-                            stat.totalPnl >= 0 ? "bg-moss/10 text-moss" : "bg-loss/10 text-loss"
-                          ].join(" ")}
-                        >
-                          {formatCurrency(stat.totalPnl)}
-                        </span>
-                      </div>
-                      <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
-                        <SnapshotRow label="Avg" value={formatCurrency(stat.avgPnl)} />
-                        <SnapshotRow label="Best" value={stat.bestTrade ? formatCurrency(tradePnl(stat.bestTrade)) : "research"} />
-                        <SnapshotRow label="Worst" value={stat.worstTrade ? formatCurrency(tradePnl(stat.worstTrade)) : "research"} />
-                      </div>
-                      <ReadMoreText
-                        className="mt-4 text-sm leading-6 text-ink/64"
-                        limit={160}
-                        value={stat.researchSummary}
-                      />
-                      {stat.researchRules.length > 0 && (
-                        <ReadMoreList
-                          className="mt-3 text-sm leading-6 text-ink/62"
-                          limit={130}
-                          values={stat.researchRules}
-                          visibleCount={2}
+                        <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
+                          <SnapshotRow label="Avg" value={formatCurrency(stat.avgPnl)} />
+                          <SnapshotRow label="Best" value={stat.bestTrade ? formatCurrency(tradePnl(stat.bestTrade)) : "research"} />
+                          <SnapshotRow label="Worst" value={stat.worstTrade ? formatCurrency(tradePnl(stat.worstTrade)) : "research"} />
+                        </div>
+                        <ReadMoreText
+                          className="mt-4 text-sm leading-6 text-ink/64"
+                          limit={160}
+                          value={stat.researchSummary}
                         />
-                      )}
-                      <div className="mt-4 flex flex-wrap gap-2">
-                        <Badge variant="secondary">{stat.validationState}</Badge>
-                        {stat.symbols.slice(0, 4).map(tagChip)}
-                        {stat.setups.slice(0, 3).map(tagChip)}
-                        {stat.sourceTitles.slice(0, 2).map(tagChip)}
-                      </div>
-                    </article>
-                  ))}
+                        {stat.researchRules.length > 0 && (
+                          <ReadMoreList
+                            className="mt-3 text-sm leading-6 text-ink/62"
+                            limit={130}
+                            values={stat.researchRules}
+                            visibleCount={2}
+                          />
+                        )}
+                        <div className="mt-4 flex flex-wrap gap-2">
+                          <Badge variant="secondary">{stat.validationState}</Badge>
+                          {compatibilityTags.map((tag) => (
+                            <Badge key={tag} variant={tag.includes("not") ? "outline" : "success"}>
+                              {tag}
+                            </Badge>
+                          ))}
+                          {stat.symbols.slice(0, 4).map(tagChip)}
+                          {stat.setups.slice(0, 3).map(tagChip)}
+                          {stat.sourceTitles.slice(0, 2).map(tagChip)}
+                        </div>
+                      </article>
+                    );
+                  })}
                   {!strategyStats.length && (
                     <div className="grid min-h-64 place-items-center p-6 text-center text-sm font-medium text-ink/55">
                       No strategy stats yet
@@ -2880,6 +3197,15 @@ function StrategyInfoSummary({ strategyInfo }: { strategyInfo: GeneratedStrategy
     ["Market", strategyInfo.market],
     ["Confidence", strategyInfo.confidence !== undefined ? `${Math.round(strategyInfo.confidence * 100)}%` : null]
   ].filter((row): row is [string, string] => Boolean(row[1]));
+  const compatibilityTags = marketCompatibilityTags([
+    strategyInfo.market,
+    strategyInfo.setup,
+    strategyInfo.summary,
+    strategyInfo.timeframe,
+    ...(strategyInfo.indicators ?? []),
+    ...(strategyInfo.technical_tags ?? []),
+    ...Object.values(strategyInfo.technical_profile ?? {}).flat()
+  ]);
 
   return (
     <div className="mt-4 border-l-2 border-signal/35 pl-3">
@@ -2904,6 +3230,13 @@ function StrategyInfoSummary({ strategyInfo }: { strategyInfo: GeneratedStrategy
       {strategyInfo.indicators?.length ? (
         <div className="mt-3 flex flex-wrap gap-2">{strategyInfo.indicators.map(tagChip)}</div>
       ) : null}
+      <div className="mt-3 flex flex-wrap gap-2">
+        {compatibilityTags.map((tag) => (
+          <Badge key={tag} variant={tag.includes("not") ? "outline" : "success"}>
+            {tag}
+          </Badge>
+        ))}
+      </div>
       {strategyInfo.technical_tags?.length ? (
         <div className="mt-3">
           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/45">Technicals</p>
@@ -3087,6 +3420,15 @@ function StrategyEvaluationCard({
       : evaluation.decision === "weakens-edge"
         ? "border-loss/25 bg-loss/10"
         : "border-caution/30 bg-caution/10";
+  const compatibilityTags = marketCompatibilityTags([
+    evaluation.draft.asset_class,
+    evaluation.draft.symbol,
+    evaluation.draft.strategy,
+    evaluation.draft.setup,
+    evaluation.rationale,
+    ...evaluation.technical_tags,
+    ...Object.values(evaluation.technical_profile ?? {}).flat()
+  ]);
 
   return (
     <article className={`mt-4 rounded-lg border p-4 ${toneClass}`}>
@@ -3112,6 +3454,13 @@ function StrategyEvaluationCard({
           {essentialTechnicalTags(evaluation.technical_tags).map(tagChip)}
         </div>
       )}
+      <div className="mt-3 flex flex-wrap gap-2">
+        {compatibilityTags.map((tag) => (
+          <Badge key={tag} variant={tag.includes("not") ? "outline" : "success"}>
+            {tag}
+          </Badge>
+        ))}
+      </div>
       <details className="mt-3 rounded-md border border-line bg-card/70 px-3 py-2 text-sm">
         <summary className="cursor-pointer font-semibold text-ink">Why included / excluded</summary>
         <div className="mt-3 grid gap-3 md:grid-cols-2">
@@ -3154,6 +3503,16 @@ function TradeRecommendationCard({
   recommendation: TradeRecommendation;
   onApply: (recommendation: TradeRecommendation) => void;
 }) {
+  const compatibilityTags = marketCompatibilityTags([
+    recommendation.draft?.asset_class,
+    recommendation.draft?.symbol,
+    recommendation.strategy,
+    recommendation.setup,
+    recommendation.action,
+    recommendation.rationale,
+    ...recommendation.technical_tags
+  ]);
+
   return (
     <article className="rounded-lg border border-caution/25 bg-caution/10 p-4">
       <div className="flex items-start justify-between gap-3">
@@ -3180,6 +3539,13 @@ function TradeRecommendationCard({
           {essentialTechnicalTags(recommendation.technical_tags).map(tagChip)}
         </div>
       )}
+      <div className="mt-3 flex flex-wrap gap-2">
+        {compatibilityTags.map((tag) => (
+          <Badge key={tag} variant={tag.includes("not") ? "outline" : "success"}>
+            {tag}
+          </Badge>
+        ))}
+      </div>
       {recommendation.risk_notes.length > 0 && (
         <ReadMoreList
           className="mt-3 border-l-2 border-loss/30 pl-3 text-sm leading-6 text-ink/64"
@@ -3204,6 +3570,111 @@ function TradeRecommendationCard({
         </button>
       )}
     </article>
+  );
+}
+
+function TradeLogDropdown({
+  trade,
+  onClose,
+  onDelete
+}: {
+  trade: TradeEntry;
+  onClose: (trade: TradeEntry) => void | Promise<void>;
+  onDelete: (id: string) => void | Promise<void>;
+}) {
+  const pnl = tradePnl(trade);
+  const closed = isTradeClosed(trade);
+  const mark = tradeMarkPrice(trade);
+  const lookupSymbol = quoteLookupSymbol(trade);
+  const multiplier = tradeContractMultiplier(trade);
+  const rows = [
+    ["Entry", formatCurrency(trade.entryPrice)],
+    ["Mark", mark ? formatCurrency(mark) : "waiting quote"],
+    ["Exit", trade.exitPrice === null || trade.exitPrice === undefined ? "open" : formatCurrency(trade.exitPrice)],
+    ["Qty", String(trade.quantity)],
+    ["Multiplier", String(multiplier)],
+    ["Notional", formatCurrency(tradeNotional(trade))],
+    ["Quote", lookupSymbol || trade.symbol],
+    ["Provider", trade.quoteProvider],
+    ["Stop", numberFieldValue(trade.stopPrice)],
+    ["Target", numberFieldValue(trade.targetPrice)],
+    ["Risk", trade.riskAmount ? formatCurrency(trade.riskAmount) : null],
+    ["Timeframe", trade.timeframe],
+    ["Session", trade.session],
+    ["Exchange", trade.exchange],
+    ["Leverage", numberFieldValue(trade.leverage)],
+    ["Underlying", trade.underlyingSymbol],
+    ["Expiration", trade.expirationDate],
+    ["Option type", trade.optionType],
+    ["Strike", numberFieldValue(trade.strikePrice)],
+    ["Delta", numberFieldValue(trade.delta)],
+    ["IV", numberFieldValue(trade.impliedVolatility)],
+    ["Contract", trade.futuresContract],
+    ["Tick", trade.tickSize && trade.tickValue ? `${trade.tickSize} / ${formatCurrency(trade.tickValue)}` : null]
+  ].filter((row): row is [string, string] => Boolean(row[1]));
+
+  return (
+    <details className="group bg-card/40">
+      <summary className="grid cursor-pointer gap-3 px-4 py-3 text-sm transition hover:bg-paper/65 md:grid-cols-[minmax(0,1fr)_auto_auto] md:items-center">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-semibold text-ink">{trade.symbol}</span>
+            <Badge variant="secondary">{normalizeAssetClass(trade.assetClass)}</Badge>
+            <Badge variant={closed ? "secondary" : "warning"}>
+              {closed ? "closed" : trade.paperOrder ? "paper open" : "open"}
+            </Badge>
+            <span className="text-xs font-medium uppercase tracking-[0.12em] text-ink/42">{trade.entryDate}</span>
+          </div>
+          <p className="mt-1 truncate text-ink/62">
+            {trade.strategy || "Untitled strategy"} / {trade.setup || "no setup"}
+          </p>
+        </div>
+        <div className="text-ink/66 md:text-right">
+          <p>{formatCurrency(trade.entryPrice)} / {mark ? formatCurrency(mark) : "waiting quote"}</p>
+          <p className="text-xs font-medium text-ink/45">
+            {trade.side} x{trade.quantity} / mult {multiplier}
+          </p>
+        </div>
+        <div className={["font-semibold md:text-right", pnl >= 0 ? "text-moss" : "text-loss"].join(" ")}>
+          {formatCurrency(pnl)}
+        </div>
+      </summary>
+      <div className="grid gap-4 border-t border-line px-4 pb-4 pt-3 md:grid-cols-[1fr_1fr]">
+        <div className="grid gap-2 text-sm">
+          {rows.map(([label, value]) => (
+            <SnapshotRow key={label} label={label} value={value} />
+          ))}
+        </div>
+        <div className="grid content-start gap-3">
+          <div className="rounded-md border border-line bg-paper/55 p-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/45">Plan</p>
+            <p className="mt-2 text-sm font-medium text-ink">{trade.strategy || "Untitled strategy"}</p>
+            <p className="mt-1 text-sm text-ink/62">{trade.setup || "No setup recorded"}</p>
+            <ReadMoreText
+              className="mt-2 text-sm leading-6 text-ink/62"
+              limit={120}
+              value={trade.notes}
+            />
+          </div>
+          <div className="flex flex-wrap justify-end gap-2">
+            {!closed && (
+              <Button onClick={() => void onClose(trade)} size="sm" type="button" variant="outline">
+                Close live
+              </Button>
+            )}
+            <button
+              className="inline-flex min-h-9 items-center gap-2 rounded-md px-3 text-sm font-semibold text-ink/50 transition hover:bg-paper hover:text-loss"
+              onClick={() => void onDelete(trade.id)}
+              title="Delete"
+              type="button"
+            >
+              <Trash2 aria-hidden="true" size={17} />
+              Delete
+            </button>
+          </div>
+        </div>
+      </div>
+    </details>
   );
 }
 
@@ -3406,8 +3877,12 @@ function buildLocalStrategyEvaluation(
     !tags.length ? "needs-structure" : score >= 0.68 ? "beneficial" : score >= 0.48 ? "observe" : "weakens-edge";
   const setup = profile.setups?.[0] ?? setupRules.find(([phrase]) => idea.toLowerCase().includes(phrase))?.[1];
   const tradeSymbol = symbol || (tags.includes("futures") ? "ES" : tags.includes("crypto") ? "BTC" : "SPY");
+  const assetClass = assetClassForSymbol(tradeSymbol, idea, ...tags);
   const side: TradeEntry["side"] = /\b(short|fade|breakdown|sell)\b/i.test(idea) ? "short" : "long";
   const title = idea.split(".")[0].slice(0, 90) || setup || "Plain-English strategy idea";
+  const optionType = /\b(call|calls)\b/i.test(idea) ? "call" : /\b(put|puts)\b/i.test(idea) ? "put" : undefined;
+  const strike = idea.match(/\bstrike[:=\s]+(\d+(?:\.\d+)?)/i)?.[1];
+  const expiration = idea.match(/\b(?:exp|expiry|expiration)[:=\s]+(\d{4}-\d{2}-\d{2})/i)?.[1];
   const included = [
     setup ? `Setup extracted: ${setup}.` : "",
     tags.length ? `Technicals extracted: ${tags.slice(0, 8).join(", ")}.` : "",
@@ -3433,12 +3908,22 @@ function buildLocalStrategyEvaluation(
     excluded,
     draft: {
       symbol: tradeSymbol,
+      asset_class: assetClass,
+      quote_symbol: assetClass === "future" ? tradeSymbol : undefined,
       side,
       strategy: title,
       setup: setup ?? "Source-backed setup",
       emotion: "patient",
       quantity: "1",
       fees: "0",
+      contract_multiplier: String(defaultContractMultiplier(assetClass, tradeSymbol)),
+      underlying_symbol: assetClass === "option" ? tradeSymbol : undefined,
+      option_type: optionType,
+      strike_price: strike,
+      expiration_date: expiration,
+      futures_contract: assetClass === "future" ? tradeSymbol : undefined,
+      tick_size: assetClass === "future" ? numberString(futuresSymbolDefaults[tradeSymbol]?.tickSize) : undefined,
+      tick_value: assetClass === "future" ? numberString(futuresSymbolDefaults[tradeSymbol]?.tickValue) : undefined,
       notes: `${decision} local evaluation. Tags: ${tags.slice(0, 6).join(", ")}.`
     }
   };
@@ -3779,8 +4264,17 @@ function parseQuickTrade(raw: string): QuickTradeDraft | null {
   const entryMatch = text.match(/\b(?:entry|in|buy|short|long)[:=@\s]+(\d+(?:\.\d+)?)/i);
   const exitMatch = text.match(/\b(?:exit|out|sell|cover|target)[:=@\s]+(\d+(?:\.\d+)?)/i);
   const qtyMatch = text.match(/\b(?:qty|quantity|shares|contracts|size|x)[:=\s]*(\d+(?:\.\d+)?)/i);
+  const multiplierMatch = text.match(/\b(?:multiplier|contract multiplier|mult)[:=\s]*(\d+(?:\.\d+)?)/i);
+  const riskMatch = text.match(/\b(?:risk|risk amount|max loss)[:=\s]*(\d+(?:\.\d+)?)/i);
+  const stopMatch = text.match(/\b(?:stop|stop loss|invalidation)[:=@\s]+(\d+(?:\.\d+)?)/i);
+  const targetMatch = text.match(/\b(?:target|take profit|tp)[:=@\s]+(\d+(?:\.\d+)?)/i);
+  const strikeMatch = text.match(/\b(?:strike)[:=@\s]+(\d+(?:\.\d+)?)/i);
+  const expiryMatch = text.match(/\b(?:exp|expiry|expiration)[:=\s]+(\d{4}-\d{2}-\d{2})/i);
+  const deltaMatch = text.match(/\b(?:delta)[:=\s]+(-?\d+(?:\.\d+)?)/i);
+  const ivMatch = text.match(/\b(?:iv|implied vol|implied volatility)[:=\s]+(\d+(?:\.\d+)?)/i);
   const numericText = textWithoutDate
     .replace(/\b(?:fee|fees|commission)[:=\s]+\d+(?:\.\d+)?/gi, " ")
+    .replace(/\b(?:risk|risk amount|max loss|stop|stop loss|invalidation|target|take profit|tp|strike|delta|iv|implied vol|implied volatility|multiplier|contract multiplier|mult)[:=@\s]+-?\d+(?:\.\d+)?/gi, " ")
     .replace(/[,$]/g, " ")
     .replace(/->|@|x/gi, " ");
   const numbers = (numericText.match(/\b\d+(?:\.\d+)?\b/g) ?? []).map(Number);
@@ -3793,15 +4287,33 @@ function parseQuickTrade(raw: string): QuickTradeDraft | null {
   const setup = labeledValue(text, ["setup", "playbook", "pattern"]);
   const emotion = labeledValue(text, ["state", "emotion", "mood"]) || "focused";
   const notes = labeledValue(text, ["notes", "note", "why"]) || text;
+  const assetClass = assetClassForSymbol(symbol ?? "", text, strategy, setup, notes);
+  const optionType = /\b(call|calls)\b/i.test(text) ? "call" : /\b(put|puts)\b/i.test(text) ? "put" : null;
+  const futuresContract = assetClass === "future" ? symbol : "";
 
   if (!symbol || !entryPrice || !quantity) return null;
 
   return {
     symbol,
+    assetClass,
+    quoteSymbol: null,
     side,
     entryDate: date,
     entryPrice,
     exitPrice,
+    contractMultiplier: Number(multiplierMatch?.[1]) || defaultContractMultiplier(assetClass, symbol),
+    riskAmount: riskMatch?.[1] ? Number(riskMatch[1]) : null,
+    stopPrice: stopMatch?.[1] ? Number(stopMatch[1]) : null,
+    targetPrice: targetMatch?.[1] ? Number(targetMatch[1]) : exitPrice,
+    expirationDate: expiryMatch?.[1] ?? null,
+    optionType,
+    strikePrice: strikeMatch?.[1] ? Number(strikeMatch[1]) : null,
+    underlyingSymbol: assetClass === "option" ? symbol : null,
+    delta: deltaMatch?.[1] ? Number(deltaMatch[1]) : null,
+    impliedVolatility: ivMatch?.[1] ? Number(ivMatch[1]) : null,
+    futuresContract,
+    tickSize: assetClass === "future" ? futuresSymbolDefaults[symbol]?.tickSize ?? null : null,
+    tickValue: assetClass === "future" ? futuresSymbolDefaults[symbol]?.tickValue ?? null : null,
     quantity,
     fees,
     strategy,

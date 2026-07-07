@@ -45,19 +45,24 @@ Current app functionality:
 - Route source enrichment through deterministic local rules by default, with
   opt-in provider routing for OpenRouter, Groq, Gemini, and Cerebras keys.
 - Log journal entries, emotional state, and routine completion.
-- Log closed or in-progress trades through detailed fields or a compact
-  one-line quick entry, then calculate realized and live-marked P&L, win-rate,
-  setup, state, and strategy metrics.
+- Log closed or in-progress equity, option, futures, crypto, and forex trades
+  through a compact ticket with an advanced parameters dropdown or a one-line
+  quick entry, then calculate realized and live-marked P&L using contract
+  multipliers, win-rate, setup, state, and strategy metrics.
 - Fetch delayed live quotes through the market-data adapter to fill entry/target
-  exits, mark open trades, and close in-progress trades from the trade table.
+  exits, mark open trades by display or quote symbol, and close in-progress
+  trades from collapsible trade history rows.
 - Place live paper trades from the ticket at the latest quote, keep them open
   in an active positions panel, refresh marks while they are in progress, and
   close them at the current quote.
 - Generate trade recommendations from uploaded strategies, extracted
-  technicals, learned source memory, and matching closed-trade history.
+  technicals, learned source memory, matching closed-trade history, and market
+  compatibility tags such as options-ready, futures-ready, or not
+  options-specific.
 - Fill the trade form from a source-backed recommendation draft, including
-  symbol, side, strategy, setup, quote-backed entry/exit prices, quantity, fees,
-  emotion, and notes.
+  symbol, asset class, quote symbol, side, strategy, setup, quote-backed
+  entry/exit prices, quantity, fees, risk/stop/target, option/futures
+  parameters, emotion, and notes.
 - Evaluate plain-English strategy ideas against the current knowledge base,
   assign technical tags, explain included/excluded evidence, fill a trade draft
   when useful, and log the AI evaluation into the journal.

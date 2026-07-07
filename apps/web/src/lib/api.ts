@@ -50,35 +50,105 @@ export async function getAiRouterStatus(): Promise<AiRouterStatus> {
 type TradeDto = {
   id: string;
   symbol: string;
+  asset_class: string;
   side: string;
   entry_time: string;
   entry_price: string;
   exit_price: string | null;
   quantity: string;
   fees: string;
+  timeframe: string | null;
+  session: string | null;
+  planned_risk_amount: string | null;
   emotional_state_after: string | null;
   journal_summary: string | null;
   metadata: Json;
   created_at: string;
 };
 
+function metaString(meta: Json, key: string) {
+  const value = meta[key];
+  return typeof value === "string" && value ? value : null;
+}
+
+function metaNumber(meta: Json, key: string) {
+  const value = meta[key];
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
+function tradeMetadata(trade: Partial<TradeEntry>): Json {
+  return {
+    strategy: trade.strategy,
+    setup: trade.setup,
+    emotion: trade.emotion,
+    notes: trade.notes,
+    status: trade.exitPrice === null ? "open" : trade.exitPrice === undefined ? trade.status : "closed",
+    currentPrice: trade.currentPrice,
+    quoteProvider: trade.quoteProvider,
+    quoteTime: trade.quoteTime,
+    quoteSymbol: trade.quoteSymbol,
+    orderType: trade.orderType ?? "manual",
+    paperOrder: Boolean(trade.paperOrder),
+    contractMultiplier: trade.contractMultiplier,
+    riskAmount: trade.riskAmount,
+    stopPrice: trade.stopPrice,
+    targetPrice: trade.targetPrice,
+    exchange: trade.exchange,
+    expirationDate: trade.expirationDate,
+    optionType: trade.optionType,
+    strikePrice: trade.strikePrice,
+    underlyingSymbol: trade.underlyingSymbol,
+    delta: trade.delta,
+    impliedVolatility: trade.impliedVolatility,
+    futuresContract: trade.futuresContract,
+    tickSize: trade.tickSize,
+    tickValue: trade.tickValue,
+    leverage: trade.leverage
+  };
+}
+
 function tradeFromDto(dto: TradeDto): TradeEntry {
   const meta = dto.metadata ?? {};
   return {
     id: dto.id,
     symbol: dto.symbol,
+    assetClass: dto.asset_class || metaString(meta, "assetClass") || "equity",
     side: dto.side === "short" ? "short" : "long",
     entryDate: dto.entry_time.slice(0, 10),
     entryPrice: Number(dto.entry_price),
     exitPrice: dto.exit_price === null ? null : Number(dto.exit_price),
     currentPrice: typeof meta.currentPrice === "number" ? meta.currentPrice : null,
-    quoteProvider: String(meta.quoteProvider ?? ""),
-    quoteTime: String(meta.quoteTime ?? ""),
+    quoteProvider: metaString(meta, "quoteProvider"),
+    quoteTime: metaString(meta, "quoteTime"),
+    quoteSymbol: metaString(meta, "quoteSymbol"),
     status: dto.exit_price === null ? "open" : "closed",
     orderType: typeof meta.orderType === "string" ? meta.orderType : "manual",
     paperOrder: Boolean(meta.paperOrder),
     quantity: Number(dto.quantity),
     fees: Number(dto.fees),
+    contractMultiplier: metaNumber(meta, "contractMultiplier"),
+    riskAmount:
+      dto.planned_risk_amount === null ? metaNumber(meta, "riskAmount") : Number(dto.planned_risk_amount),
+    stopPrice: metaNumber(meta, "stopPrice"),
+    targetPrice: metaNumber(meta, "targetPrice"),
+    timeframe: dto.timeframe ?? metaString(meta, "timeframe"),
+    session: dto.session ?? metaString(meta, "session"),
+    exchange: metaString(meta, "exchange"),
+    expirationDate: metaString(meta, "expirationDate"),
+    optionType: metaString(meta, "optionType"),
+    strikePrice: metaNumber(meta, "strikePrice"),
+    underlyingSymbol: metaString(meta, "underlyingSymbol"),
+    delta: metaNumber(meta, "delta"),
+    impliedVolatility: metaNumber(meta, "impliedVolatility"),
+    futuresContract: metaString(meta, "futuresContract"),
+    tickSize: metaNumber(meta, "tickSize"),
+    tickValue: metaNumber(meta, "tickValue"),
+    leverage: metaNumber(meta, "leverage"),
     strategy: String(meta.strategy ?? ""),
     setup: String(meta.setup ?? ""),
     emotion: String(meta.emotion ?? dto.emotional_state_after ?? "focused"),
@@ -95,6 +165,7 @@ export async function listTrades(): Promise<TradeEntry[]> {
 export async function createTrade(trade: TradeEntry): Promise<TradeEntry> {
   const body = {
     symbol: trade.symbol,
+    asset_class: trade.assetClass ?? "equity",
     side: trade.side,
     entry_time: `${trade.entryDate}T00:00:00Z`,
     entry_price: String(trade.entryPrice),
@@ -102,19 +173,16 @@ export async function createTrade(trade: TradeEntry): Promise<TradeEntry> {
     exit_time: trade.exitPrice === null ? null : `${trade.entryDate}T00:00:00Z`,
     quantity: String(trade.quantity),
     fees: String(trade.fees),
+    timeframe: trade.timeframe || null,
+    session: trade.session || null,
+    planned_risk_amount: trade.riskAmount === null || trade.riskAmount === undefined ? null : String(trade.riskAmount),
     emotional_state_after: trade.emotion || null,
     journal_summary: trade.notes || null,
     metadata: {
-      strategy: trade.strategy,
-      setup: trade.setup,
-      emotion: trade.emotion,
-      notes: trade.notes,
-      status: trade.exitPrice === null ? "open" : "closed",
-      currentPrice: trade.currentPrice,
-      quoteProvider: trade.quoteProvider,
-      quoteTime: trade.quoteTime,
-      orderType: trade.orderType ?? "manual",
-      paperOrder: Boolean(trade.paperOrder)
+      ...tradeMetadata(trade),
+      assetClass: trade.assetClass ?? "equity",
+      timeframe: trade.timeframe,
+      session: trade.session
     }
   };
   const dto = await request<TradeDto>("/api/v1/trades", {
@@ -135,12 +203,34 @@ export async function updateTrade(id: string, trade: Partial<TradeEntry>): Promi
   if (trade.currentPrice !== undefined) metadata.currentPrice = trade.currentPrice;
   if (trade.quoteProvider !== undefined) metadata.quoteProvider = trade.quoteProvider;
   if (trade.quoteTime !== undefined) metadata.quoteTime = trade.quoteTime;
+  if (trade.quoteSymbol !== undefined) metadata.quoteSymbol = trade.quoteSymbol;
   if (trade.orderType !== undefined) metadata.orderType = trade.orderType;
   if (trade.paperOrder !== undefined) metadata.paperOrder = trade.paperOrder;
+  if (trade.assetClass !== undefined) metadata.assetClass = trade.assetClass;
+  if (trade.contractMultiplier !== undefined) metadata.contractMultiplier = trade.contractMultiplier;
+  if (trade.riskAmount !== undefined) metadata.riskAmount = trade.riskAmount;
+  if (trade.stopPrice !== undefined) metadata.stopPrice = trade.stopPrice;
+  if (trade.targetPrice !== undefined) metadata.targetPrice = trade.targetPrice;
+  if (trade.timeframe !== undefined) metadata.timeframe = trade.timeframe;
+  if (trade.session !== undefined) metadata.session = trade.session;
+  if (trade.exchange !== undefined) metadata.exchange = trade.exchange;
+  if (trade.expirationDate !== undefined) metadata.expirationDate = trade.expirationDate;
+  if (trade.optionType !== undefined) metadata.optionType = trade.optionType;
+  if (trade.strikePrice !== undefined) metadata.strikePrice = trade.strikePrice;
+  if (trade.underlyingSymbol !== undefined) metadata.underlyingSymbol = trade.underlyingSymbol;
+  if (trade.delta !== undefined) metadata.delta = trade.delta;
+  if (trade.impliedVolatility !== undefined) metadata.impliedVolatility = trade.impliedVolatility;
+  if (trade.futuresContract !== undefined) metadata.futuresContract = trade.futuresContract;
+  if (trade.tickSize !== undefined) metadata.tickSize = trade.tickSize;
+  if (trade.tickValue !== undefined) metadata.tickValue = trade.tickValue;
+  if (trade.leverage !== undefined) metadata.leverage = trade.leverage;
 
   const body: Json = {};
   if (trade.exitPrice !== undefined) body.exit_price = trade.exitPrice === null ? null : String(trade.exitPrice);
   if (trade.fees !== undefined) body.fees = String(trade.fees);
+  if (trade.riskAmount !== undefined) {
+    body.planned_risk_amount = trade.riskAmount === null ? null : String(trade.riskAmount);
+  }
   if (trade.emotion !== undefined) body.emotional_state_after = trade.emotion;
   if (trade.notes !== undefined) body.journal_summary = trade.notes;
   if (Object.keys(metadata).length) body.metadata = metadata;

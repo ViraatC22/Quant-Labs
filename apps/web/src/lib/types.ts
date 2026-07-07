@@ -84,9 +84,12 @@ export type JournalEntry = {
   createdAt: string;
 };
 
+export type TradeAssetClass = "equity" | "option" | "future" | "crypto" | "forex";
+
 export type TradeEntry = {
   id: string;
   symbol: string;
+  assetClass?: TradeAssetClass | string;
   side: "long" | "short";
   entryDate: string;
   entryPrice: number;
@@ -94,11 +97,29 @@ export type TradeEntry = {
   currentPrice?: number | null;
   quoteProvider?: string | null;
   quoteTime?: string | null;
+  quoteSymbol?: string | null;
   status?: "open" | "closed";
   orderType?: "manual" | "paper_market" | string;
   paperOrder?: boolean;
   quantity: number;
   fees: number;
+  contractMultiplier?: number | null;
+  riskAmount?: number | null;
+  stopPrice?: number | null;
+  targetPrice?: number | null;
+  timeframe?: string | null;
+  session?: string | null;
+  exchange?: string | null;
+  expirationDate?: string | null;
+  optionType?: "call" | "put" | string | null;
+  strikePrice?: number | null;
+  underlyingSymbol?: string | null;
+  delta?: number | null;
+  impliedVolatility?: number | null;
+  futuresContract?: string | null;
+  tickSize?: number | null;
+  tickValue?: number | null;
+  leverage?: number | null;
   strategy: string;
   setup: string;
   emotion: string;
@@ -119,6 +140,8 @@ export type TradeRecommendation = {
   evidence: string[];
   draft?: {
     symbol?: string;
+    asset_class?: TradeAssetClass | string;
+    quote_symbol?: string;
     side?: "long" | "short";
     strategy?: string;
     setup?: string;
@@ -127,6 +150,23 @@ export type TradeRecommendation = {
     fees?: string;
     entry_price?: string;
     exit_price?: string;
+    contract_multiplier?: string;
+    risk_amount?: string;
+    stop_price?: string;
+    target_price?: string;
+    timeframe?: string;
+    session?: string;
+    exchange?: string;
+    expiration_date?: string;
+    option_type?: "call" | "put" | string;
+    strike_price?: string;
+    underlying_symbol?: string;
+    delta?: string;
+    implied_volatility?: string;
+    futures_contract?: string;
+    tick_size?: string;
+    tick_value?: string;
+    leverage?: string;
     price_source?: string;
     price_time?: string;
     notes?: string;

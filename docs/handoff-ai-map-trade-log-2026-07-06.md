@@ -62,9 +62,25 @@ Follow-up: 2026-07-07
   market order at the latest quote, persist provider/time/order metadata, show
   the open position in an active book, refresh live marks, and close the
   position at the current quote.
+- Upgraded the trade ticket with an asset-class selector for stock/ETF,
+  options, futures, crypto, and forex, plus an advanced parameters dropdown for
+  quote symbol, multiplier, risk, stop/target, timeframe, session, exchange,
+  option expiry/type/strike/greeks, and futures contract/tick details.
+- Live paper marks now use a quote lookup symbol when supplied while preserving
+  the user's display symbol, and P&L/notional calculations use contract
+  multipliers for options and futures.
+- Replaced the long trades table with collapsible trade dropdown rows that show
+  the essentials first and reveal instrument parameters, quote/feed details,
+  notes, and actions on expand.
+- Added market-compatibility chips to source strategies, recommendation cards,
+  plain-English strategy evaluations, and the Strategy Scoreboard so strategies
+  can be labeled options-ready, futures-ready, equity-ready, or not
+  options-specific.
 - Recommendation and strategy-evaluation drafts now fill entry and exit prices
   when a quote is available, so the user can immediately log or paper-log a
-  trade.
+  trade. Drafts now also carry asset class, quote symbol, contract multiplier,
+  and option/futures parameters when those can be inferred from learned tags or
+  plain-English strategy text.
 - Added `/api/v1/trades/strategy/optimal` to synthesize the current best
   knowledge-base strategy from learned sources and trade history, including
   included/excluded rationale and a draft.
@@ -192,6 +208,16 @@ npm --prefix apps/web run lint
 
 Both passed.
 
+Re-run on 2026-07-07 after asset-class trade ticket and collapsible trade log
+work:
+
+```bash
+npm --prefix apps/web run typecheck
+npm --prefix apps/web run lint
+```
+
+Both passed.
+
 ## AI Router Notes
 
 - Default mode: `AI_ENRICHMENT_MODE=local`.
@@ -209,7 +235,9 @@ Both passed.
   graph entirely in the browser. Source ingestion now writes KG facts; the next
   step is to hydrate the frontend map directly from `/api/v1/graph/*`.
 - Add a trade ticket parser endpoint so quick trade parsing can become shared
-  API behavior and eventually accept screenshots/broker exports.
+  API behavior and eventually accept screenshots/broker exports. The frontend
+  parser now understands basic option/futures/risk fields, but the API should
+  own this once screenshots and broker imports are added.
 - Add source-to-strategy review controls for accepting, merging, or rejecting
   generated strategy hypotheses.
 - Add provider health checks and rate-limit/error telemetry once real keys are
