@@ -211,15 +211,17 @@ const emptyState: WorkspaceState = {
 };
 
 const graphClusterGuides: GraphClusterGuide[] = [
-  { label: "Source Evidence", x: 24, y: 42, width: 196, height: 248 },
-  { label: "Strategy Layer", x: 250, y: 42, width: 190, height: 248 },
-  { label: "Execution Setups", x: 490, y: 42, width: 190, height: 248 },
-  { label: "Trade Outcomes", x: 724, y: 42, width: 172, height: 248 },
-  { label: "Journal Routine", x: 24, y: 354, width: 196, height: 156 },
-  { label: "Tags", x: 250, y: 354, width: 190, height: 156 },
-  { label: "States", x: 490, y: 354, width: 190, height: 156 },
-  { label: "Markets", x: 724, y: 354, width: 172, height: 156 }
+  { label: "Source Evidence", x: 24, y: 48, width: 220, height: 270 },
+  { label: "Strategy Layer", x: 290, y: 48, width: 210, height: 270 },
+  { label: "Execution Setups", x: 560, y: 48, width: 210, height: 270 },
+  { label: "Trade Outcomes", x: 830, y: 48, width: 200, height: 270 },
+  { label: "Journal Routine", x: 24, y: 390, width: 220, height: 180 },
+  { label: "Tags", x: 290, y: 390, width: 210, height: 180 },
+  { label: "States", x: 560, y: 390, width: 210, height: 180 },
+  { label: "Markets", x: 830, y: 390, width: 200, height: 180 }
 ];
+const graphCanvasWidth = 1060;
+const graphCanvasHeight = 660;
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const textLikeExtensions = [".txt", ".md", ".markdown", ".csv", ".json", ".log", ".pine", ".py"];
@@ -798,8 +800,8 @@ export function WorkspaceApp() {
   const [selectedGraphNodeId, setSelectedGraphNodeId] = useState("memory");
   const tradeFormRef = useRef<HTMLFormElement>(null);
   const [graphView, setGraphView] = useState<GraphViewport>({
-    centerX: 460,
-    centerY: 280,
+    centerX: graphCanvasWidth / 2,
+    centerY: graphCanvasHeight / 2,
     zoom: 1
   });
   const [graphDrag, setGraphDrag] = useState<GraphDragState | null>(null);
@@ -1060,12 +1062,26 @@ export function WorkspaceApp() {
     [graph.nodes]
   );
   const selectedGraphNode = graphNodeLookup.get(selectedGraphNodeId) ?? graph.nodes[0];
-  const selectedGraphEdges = selectedGraphNode
-    ? graph.edges.filter((edge) => edge.from === selectedGraphNode.id || edge.to === selectedGraphNode.id)
-    : [];
+  const selectedGraphEdges = useMemo(
+    () =>
+      selectedGraphNode
+        ? graph.edges.filter((edge) => edge.from === selectedGraphNode.id || edge.to === selectedGraphNode.id)
+        : [],
+    [graph.edges, selectedGraphNode]
+  );
+  const focusedGraphNodeIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (selectedGraphNode) ids.add(selectedGraphNode.id);
+    selectedGraphEdges.forEach((edge) => {
+      ids.add(edge.from);
+      ids.add(edge.to);
+    });
+    return ids;
+  }, [selectedGraphEdges, selectedGraphNode]);
+  const graphFocusMode = Boolean(selectedGraphNode && selectedGraphNode.type !== "memory");
   const graphViewBox = useMemo(() => {
-    const width = 920 / graphView.zoom;
-    const height = 560 / graphView.zoom;
+    const width = graphCanvasWidth / graphView.zoom;
+    const height = graphCanvasHeight / graphView.zoom;
     return `${graphView.centerX - width / 2} ${graphView.centerY - height / 2} ${width} ${height}`;
   }, [graphView]);
 
@@ -1087,14 +1103,14 @@ export function WorkspaceApp() {
   }
 
   function resetGraphView() {
-    setGraphView({ centerX: 460, centerY: 280, zoom: 1 });
+    setGraphView({ centerX: graphCanvasWidth / 2, centerY: graphCanvasHeight / 2, zoom: 1 });
   }
 
   function panGraph(event: React.PointerEvent<SVGSVGElement>) {
     if (!graphDrag) return;
     const rect = event.currentTarget.getBoundingClientRect();
-    const unitX = 920 / rect.width / graphDrag.startView.zoom;
-    const unitY = 560 / rect.height / graphDrag.startView.zoom;
+    const unitX = graphCanvasWidth / rect.width / graphDrag.startView.zoom;
+    const unitY = graphCanvasHeight / rect.height / graphDrag.startView.zoom;
     setGraphView({
       ...graphDrag.startView,
       centerX: graphDrag.startView.centerX - (event.clientX - graphDrag.startX) * unitX,
@@ -2443,7 +2459,7 @@ export function WorkspaceApp() {
                 <div className="mt-5 overflow-hidden rounded-lg border border-ink/10 bg-[#171a1d]">
                   <svg
                     aria-label="Trading relationship atlas"
-                    className="h-[520px] w-full cursor-grab touch-none active:cursor-grabbing"
+                    className="h-[560px] w-full cursor-grab touch-none active:cursor-grabbing"
                     onPointerDown={(event) => {
                       if ((event.target as Element).closest("[data-graph-node='true']")) return;
                       setGraphDrag({
@@ -2493,23 +2509,29 @@ export function WorkspaceApp() {
                       const from = graphNodeLookup.get(edge.from);
                       const to = graphNodeLookup.get(edge.to);
                       if (!from || !to) return null;
+                      const active =
+                        graphFocusMode && (edge.from === selectedGraphNode?.id || edge.to === selectedGraphNode?.id);
+                      const memoryEdge = from.type === "memory" || to.type === "memory";
+                      const opacity = active ? 0.76 : memoryEdge ? 0.055 : graphFocusMode ? 0.07 : 0.16;
 
                       return (
-                        <line
+                        <path
+                          d={graphEdgePath(from, to)}
+                          fill="none"
                           key={edge.id}
-                          opacity={selectedGraphNode && (edge.from === selectedGraphNode.id || edge.to === selectedGraphNode.id) ? 0.72 : 0.22}
+                          opacity={opacity}
                           stroke="#d8d1c3"
-                          strokeWidth={selectedGraphNode && (edge.from === selectedGraphNode.id || edge.to === selectedGraphNode.id) ? 1.6 : 1}
-                          x1={from.x}
-                          x2={to.x}
-                          y1={from.y}
-                          y2={to.y}
+                          strokeLinecap="round"
+                          strokeWidth={active ? 1.8 : 0.9}
                         />
                       );
                     })}
                     {graph.nodes.map((node) => {
                       const style = graphNodeStyle(node.type);
                       const selected = selectedGraphNode?.id === node.id;
+                      const focused = focusedGraphNodeIds.has(node.id);
+                      const labelVisible = graphLabelVisible(node, selected, focused, graphFocusMode);
+                      const muted = graphFocusMode && !focused;
 
                       return (
                         <g
@@ -2526,25 +2548,29 @@ export function WorkspaceApp() {
                           role="button"
                           tabIndex={0}
                         >
+                          <title>{node.label}</title>
                           <circle
                             cx={node.x}
                             cy={node.y}
                             fill={style.fill}
+                            opacity={muted ? 0.38 : 1}
                             r={graphNodeRadius(node)}
                             stroke={selected ? "#ffffff" : style.stroke}
-                            strokeWidth={selected ? 3 : 1.5}
+                            strokeWidth={selected ? 3 : focused ? 2 : 1.25}
                           />
-                          <text
-                            fill="#f7f3ea"
-                            fontSize="11"
-                            fontWeight={600}
-                            opacity={selected ? 1 : 0.78}
-                            textAnchor="middle"
-                            x={node.x}
-                            y={node.y + graphNodeRadius(node) + 16}
-                          >
-                            {shortLabel(node.label, node.type === "trade" ? 12 : 18)}
-                          </text>
+                          {labelVisible && (
+                            <text
+                              fill="#f7f3ea"
+                              fontSize={selected ? "12" : "10.5"}
+                              fontWeight={selected ? 700 : 600}
+                              opacity={selected ? 1 : focused ? 0.88 : 0.62}
+                              textAnchor="middle"
+                              x={node.x}
+                              y={node.y + graphNodeRadius(node) + 15}
+                            >
+                              {shortLabel(node.label, node.type === "trade" ? 11 : 17)}
+                            </text>
+                          )}
                         </g>
                       );
                     })}
@@ -3810,15 +3836,15 @@ function positionGraphNodes(nodes: GraphNode[]): PositionedGraphNode[] {
     GraphNodeType,
     { x: number; y: number; columns: number; colGap: number; rowGap: number }
   > = {
-    memory: { x: 460, y: 318, columns: 1, colGap: 0, rowGap: 0 },
-    source: { x: 122, y: 168, columns: 2, colGap: 90, rowGap: 56 },
-    strategy: { x: 345, y: 168, columns: 2, colGap: 88, rowGap: 56 },
-    setup: { x: 585, y: 168, columns: 2, colGap: 88, rowGap: 56 },
-    trade: { x: 810, y: 168, columns: 2, colGap: 76, rowGap: 56 },
-    journal: { x: 122, y: 432, columns: 2, colGap: 90, rowGap: 50 },
-    tag: { x: 345, y: 432, columns: 2, colGap: 88, rowGap: 50 },
-    emotion: { x: 585, y: 432, columns: 2, colGap: 88, rowGap: 50 },
-    symbol: { x: 810, y: 432, columns: 2, colGap: 76, rowGap: 50 }
+    memory: { x: graphCanvasWidth / 2, y: graphCanvasHeight / 2, columns: 1, colGap: 0, rowGap: 0 },
+    source: { x: 134, y: 190, columns: 2, colGap: 104, rowGap: 54 },
+    strategy: { x: 395, y: 190, columns: 2, colGap: 98, rowGap: 54 },
+    setup: { x: 665, y: 190, columns: 2, colGap: 98, rowGap: 54 },
+    trade: { x: 930, y: 190, columns: 3, colGap: 60, rowGap: 52 },
+    journal: { x: 134, y: 480, columns: 2, colGap: 104, rowGap: 46 },
+    tag: { x: 395, y: 480, columns: 3, colGap: 62, rowGap: 42 },
+    emotion: { x: 665, y: 480, columns: 2, colGap: 98, rowGap: 46 },
+    symbol: { x: 930, y: 480, columns: 2, colGap: 82, rowGap: 46 }
   };
   const types: GraphNodeType[] = [
     "memory",
@@ -3851,10 +3877,10 @@ function positionGraphNodes(nodes: GraphNode[]): PositionedGraphNode[] {
     const rows = Math.ceil(nodeOrder.total / columns);
     const row = Math.floor(nodeOrder.index / columns);
     const column = nodeOrder.index % columns;
-    const rowGap = Math.max(42, nodeLayout.rowGap - Math.max(0, rows - 3) * 3);
+    const rowGap = Math.max(34, nodeLayout.rowGap - Math.max(0, rows - 3) * 3);
     const columnOffset = (column - (columns - 1) / 2) * nodeLayout.colGap;
     const rowOffset = (row - (rows - 1) / 2) * rowGap;
-    const stagger = rows > 2 && column % 2 === 1 ? rowGap * 0.18 : 0;
+    const stagger = rows > 2 && column % 2 === 1 ? rowGap * 0.24 : 0;
 
     return {
       ...node,
@@ -3883,6 +3909,28 @@ function graphNodeStyle(type: GraphNodeType) {
 function graphNodeRadius(node: GraphNode) {
   if (node.type === "memory") return 24;
   return Math.min(20, 8 + Math.sqrt(node.weight) * 3);
+}
+
+function graphEdgePath(from: PositionedGraphNode, to: PositionedGraphNode) {
+  const dx = to.x - from.x;
+  const curve = Math.max(42, Math.min(180, Math.abs(dx) * 0.42));
+  const direction = dx >= 0 ? 1 : -1;
+  const c1x = from.x + curve * direction;
+  const c2x = to.x - curve * direction;
+  return `M ${from.x} ${from.y} C ${c1x} ${from.y}, ${c2x} ${to.y}, ${to.x} ${to.y}`;
+}
+
+function graphLabelVisible(
+  node: GraphNode,
+  selected: boolean,
+  focused: boolean,
+  focusMode: boolean
+) {
+  if (selected) return true;
+  if (focusMode) return focused && node.type !== "tag";
+  if (node.type === "memory" || node.type === "strategy") return true;
+  if (node.type === "source" || node.type === "setup") return node.weight > 1;
+  return false;
 }
 
 function shortLabel(value: string, limit: number) {

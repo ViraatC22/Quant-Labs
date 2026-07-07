@@ -76,6 +76,9 @@ Follow-up: 2026-07-07
   Atlas.
 - Replaced the circular atlas layout with spaced source, strategy, setup,
   trade, journal, tag, state, and market groups.
+- Cleaned up the atlas view with a wider canvas, curved low-opacity links,
+  quieter memory edges, conditional labels, and selected-node neighborhood
+  highlighting.
 - Added a recommended routine card that derives how to trade, what setup to
   look for, when to execute, and risk/review steps from extracted strategy
   rules and the current knowledge base.
@@ -154,6 +157,15 @@ npm --prefix apps/web run lint
 
 Both passed. Local server check confirmed `http://localhost:3000/` returns 200
 and serves the renamed `Atlas` tab.
+
+Re-run on 2026-07-07 after atlas visual cleanup:
+
+```bash
+npm --prefix apps/web run typecheck
+npm --prefix apps/web run lint
+```
+
+Both passed. Local server check confirmed `http://localhost:3000/` returns 200.
 
 ## AI Router Notes
 
