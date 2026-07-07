@@ -9,7 +9,9 @@ import type {
   AiRouterStatus,
   GeneratedStrategyInfo,
   JournalEntry,
+  MarketQuote,
   SourceDetails,
+  StrategyEvaluation,
   TradeEntry,
   TradeRecommendation,
   VaultItem
@@ -68,7 +70,11 @@ function tradeFromDto(dto: TradeDto): TradeEntry {
     side: dto.side === "short" ? "short" : "long",
     entryDate: dto.entry_time.slice(0, 10),
     entryPrice: Number(dto.entry_price),
-    exitPrice: Number(dto.exit_price ?? 0),
+    exitPrice: dto.exit_price === null ? null : Number(dto.exit_price),
+    currentPrice: typeof meta.currentPrice === "number" ? meta.currentPrice : null,
+    quoteProvider: String(meta.quoteProvider ?? ""),
+    quoteTime: String(meta.quoteTime ?? ""),
+    status: dto.exit_price === null ? "open" : "closed",
     quantity: Number(dto.quantity),
     fees: Number(dto.fees),
     strategy: String(meta.strategy ?? ""),
@@ -90,7 +96,8 @@ export async function createTrade(trade: TradeEntry): Promise<TradeEntry> {
     side: trade.side,
     entry_time: `${trade.entryDate}T00:00:00Z`,
     entry_price: String(trade.entryPrice),
-    exit_price: String(trade.exitPrice),
+    exit_price: trade.exitPrice === null ? null : String(trade.exitPrice),
+    exit_time: trade.exitPrice === null ? null : `${trade.entryDate}T00:00:00Z`,
     quantity: String(trade.quantity),
     fees: String(trade.fees),
     emotional_state_after: trade.emotion || null,
@@ -99,7 +106,8 @@ export async function createTrade(trade: TradeEntry): Promise<TradeEntry> {
       strategy: trade.strategy,
       setup: trade.setup,
       emotion: trade.emotion,
-      notes: trade.notes
+      notes: trade.notes,
+      status: trade.exitPrice === null ? "open" : "closed"
     }
   };
   const dto = await request<TradeDto>("/api/v1/trades", {
@@ -109,12 +117,54 @@ export async function createTrade(trade: TradeEntry): Promise<TradeEntry> {
   return tradeFromDto(dto);
 }
 
+export async function updateTrade(id: string, trade: Partial<TradeEntry>): Promise<TradeEntry> {
+  const body = {
+    exit_price: trade.exitPrice === undefined || trade.exitPrice === null ? null : String(trade.exitPrice),
+    fees: trade.fees === undefined ? undefined : String(trade.fees),
+    emotional_state_after: trade.emotion,
+    journal_summary: trade.notes,
+    metadata: {
+      strategy: trade.strategy,
+      setup: trade.setup,
+      emotion: trade.emotion,
+      notes: trade.notes,
+      status: trade.exitPrice === null ? "open" : "closed",
+      currentPrice: trade.currentPrice,
+      quoteProvider: trade.quoteProvider,
+      quoteTime: trade.quoteTime
+    }
+  };
+  const dto = await request<TradeDto>(`/api/v1/trades/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(body)
+  });
+  return tradeFromDto(dto);
+}
+
 export async function deleteTrade(id: string): Promise<void> {
   await request<void>(`/api/v1/trades/${id}`, { method: "DELETE" });
 }
 
+export async function getQuote(symbol: string): Promise<MarketQuote> {
+  return request<MarketQuote>(`/api/v1/trades/quotes/${encodeURIComponent(symbol)}`);
+}
+
 export async function listTradeRecommendations(): Promise<TradeRecommendation[]> {
   return request<TradeRecommendation[]>("/api/v1/trades/recommendations");
+}
+
+export async function getOptimalStrategy(): Promise<StrategyEvaluation> {
+  return request<StrategyEvaluation>("/api/v1/trades/strategy/optimal");
+}
+
+export async function evaluateStrategyIdea(
+  idea: string,
+  symbol?: string
+): Promise<StrategyEvaluation> {
+  return request<StrategyEvaluation>("/api/v1/trades/strategy/evaluate", {
+    method: "POST",
+    body: JSON.stringify({ idea, symbol: symbol || null, save_journal: true })
+  });
 }
 
 // --------------------------------------------------------------- journal

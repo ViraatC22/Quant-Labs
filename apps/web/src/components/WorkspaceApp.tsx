@@ -33,7 +33,9 @@ import type {
   AiRouterStatus,
   GeneratedStrategyInfo,
   JournalEntry,
+  MarketQuote,
   SourceDetails,
+  StrategyEvaluation,
   TradeEntry,
   TradeRecommendation,
   VaultItem,
@@ -158,7 +160,7 @@ type QuickTradeDraft = {
   side: TradeEntry["side"];
   entryDate: string;
   entryPrice: number;
-  exitPrice: number;
+  exitPrice: number | null;
   quantity: number;
   fees: number;
   strategy: string;
@@ -166,6 +168,8 @@ type QuickTradeDraft = {
   emotion: string;
   notes: string;
 };
+
+type TradeDraft = NonNullable<TradeRecommendation["draft"]>;
 
 const storageKey = "quant-labs.workspace.v1";
 
@@ -382,9 +386,48 @@ function formatCurrency(value: number) {
   }).format(value);
 }
 
+function quotePrice(quote: MarketQuote | undefined) {
+  return quote ? Number(quote.last_price) : null;
+}
+
+function isTradeClosed(trade: TradeEntry) {
+  return trade.exitPrice !== null && trade.exitPrice !== undefined;
+}
+
+function tradeMarkPrice(trade: TradeEntry) {
+  return trade.exitPrice ?? trade.currentPrice ?? null;
+}
+
 function tradePnl(trade: TradeEntry) {
+  const markPrice = tradeMarkPrice(trade);
+  if (markPrice === null) return 0;
   const direction = trade.side === "long" ? 1 : -1;
-  return (trade.exitPrice - trade.entryPrice) * trade.quantity * direction - trade.fees;
+  return (markPrice - trade.entryPrice) * trade.quantity * direction - trade.fees;
+}
+
+function targetPercentForTags(tags: string[]) {
+  const text = tags.join(" ");
+  if (text.includes("risk-parity")) return 0.006;
+  if (text.includes("opening-range-breakout") || text.includes("breakout")) return 0.012;
+  if (text.includes("mean-reversion") || text.includes("vwap-pullback")) return 0.008;
+  return 0.01;
+}
+
+function targetExitPrice(entry: number, side: TradeEntry["side"], tags: string[]) {
+  const pct = targetPercentForTags(tags);
+  const raw = side === "short" ? entry * (1 - pct) : entry * (1 + pct);
+  return Number(raw.toFixed(entry >= 100 ? 2 : 4));
+}
+
+function numberString(value: number | null | undefined) {
+  if (value === null || value === undefined || Number.isNaN(value)) return undefined;
+  return String(value);
+}
+
+function draftNumber(value: string | undefined) {
+  if (!value) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function Field({
@@ -696,6 +739,18 @@ export function WorkspaceApp() {
   const [apiOnline, setApiOnline] = useState(false);
   const [aiRouterStatus, setAiRouterStatus] = useState<AiRouterStatus | null>(null);
   const [tradeRecommendations, setTradeRecommendations] = useState<TradeRecommendation[]>([]);
+  const [optimalStrategy, setOptimalStrategy] = useState<StrategyEvaluation | null>(null);
+  const [quoteBySymbol, setQuoteBySymbol] = useState<Record<string, MarketQuote>>({});
+  const [strategyIdea, setStrategyIdea] = useState("");
+  const [strategyIdeaSymbol, setStrategyIdeaSymbol] = useState("");
+  const [strategyEvaluation, setStrategyEvaluation] = useState<StrategyEvaluation | null>(null);
+  const [strategyEvaluationMessage, setStrategyEvaluationMessage] = useState(
+    "Describe a strategy in plain English to score it against your current memory."
+  );
+  const [pendingTradeDraft, setPendingTradeDraft] = useState<{
+    draft: TradeDraft;
+    title: string;
+  } | null>(null);
   const [query, setQuery] = useState("");
   const [vaultUrl, setVaultUrl] = useState("");
   const [quickTradeText, setQuickTradeText] = useState("");
@@ -741,17 +796,19 @@ export function WorkspaceApp() {
 
       if (online) {
         try {
-          const [trades, journal, vault, aiStatus, recommendations] = await Promise.all([
+          const [trades, journal, vault, aiStatus, recommendations, optimal] = await Promise.all([
             api.listTrades(),
             api.listJournal(),
             api.listDocuments(),
             api.getAiRouterStatus().catch(() => null),
-            api.listTradeRecommendations().catch(() => [])
+            api.listTradeRecommendations().catch(() => []),
+            api.getOptimalStrategy().catch(() => null)
           ]);
           if (cancelled) return;
           setState({ vault, journal, trades });
           setAiRouterStatus(aiStatus);
           setTradeRecommendations(recommendations);
+          setOptimalStrategy(optimal);
           setApiOnline(true);
           setHydrated(true);
           return;
@@ -763,6 +820,7 @@ export function WorkspaceApp() {
       loadLocal();
       setAiRouterStatus(null);
       setTradeRecommendations([]);
+      setOptimalStrategy(null);
       if (!cancelled) setHydrated(true);
     }
 
@@ -779,29 +837,85 @@ export function WorkspaceApp() {
     window.localStorage.setItem(storageKey, JSON.stringify(state));
   }, [state, hydrated]);
 
+  useEffect(() => {
+    if (!hydrated || !apiOnline) return;
+    const symbols = uniqueTags(
+      state.trades
+        .filter((trade) => !isTradeClosed(trade))
+        .map((trade) => trade.symbol)
+    );
+    if (!symbols.length) return;
+
+    let cancelled = false;
+    async function refreshQuotes() {
+      const quotes = await Promise.all(
+        symbols.map((symbol) => api.getQuote(symbol).catch(() => null))
+      );
+      if (cancelled) return;
+      setQuoteBySymbol((current) => {
+        const next = { ...current };
+        quotes.forEach((quote) => {
+          if (quote) next[quote.symbol] = quote;
+        });
+        return next;
+      });
+    }
+
+    void refreshQuotes();
+    const intervalId = window.setInterval(refreshQuotes, 30000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [apiOnline, hydrated, state.trades]);
+
+  const markedTrades = useMemo(
+    () =>
+      state.trades.map((trade) => {
+        if (isTradeClosed(trade)) return trade;
+        const quote = quoteBySymbol[trade.symbol];
+        const currentPrice = quotePrice(quote);
+        return {
+          ...trade,
+          currentPrice,
+          quoteProvider: quote?.provider ?? trade.quoteProvider,
+          quoteTime: quote?.market_time ?? trade.quoteTime,
+          status: "open" as const
+        };
+      }),
+    [quoteBySymbol, state.trades]
+  );
+
+  const viewState = useMemo(
+    () => ({ ...state, trades: markedTrades }),
+    [markedTrades, state]
+  );
+
   const metrics = useMemo(() => {
-    const netPnl = state.trades.reduce((sum, trade) => sum + tradePnl(trade), 0);
-    const wins = state.trades.filter((trade) => tradePnl(trade) > 0).length;
-    const winRate = state.trades.length ? Math.round((wins / state.trades.length) * 100) : 0;
-    const memoryCount = state.vault.length + state.journal.length + state.trades.length;
+    const closedTrades = viewState.trades.filter(isTradeClosed);
+    const openTrades = viewState.trades.filter((trade) => !isTradeClosed(trade));
+    const netPnl = viewState.trades.reduce((sum, trade) => sum + tradePnl(trade), 0);
+    const wins = closedTrades.filter((trade) => tradePnl(trade) > 0).length;
+    const winRate = closedTrades.length ? Math.round((wins / closedTrades.length) * 100) : 0;
+    const memoryCount = viewState.vault.length + viewState.journal.length + viewState.trades.length;
 
     return [
       {
         label: "Vault",
-        value: String(state.vault.length),
+        value: String(viewState.vault.length),
         detail: "documents",
         icon: <BookMarked aria-hidden="true" size={20} strokeWidth={2.1} />
       },
       {
         label: "Trades",
-        value: String(state.trades.length),
-        detail: `${winRate}% win rate`,
+        value: String(viewState.trades.length),
+        detail: `${openTrades.length} open / ${winRate}% win`,
         icon: <Activity aria-hidden="true" size={20} strokeWidth={2.1} />
       },
       {
         label: "P&L",
         value: formatCurrency(netPnl),
-        detail: "closed trades",
+        detail: openTrades.length ? "realized + open marks" : "closed trades",
         icon: <LineChart aria-hidden="true" size={20} strokeWidth={2.1} />
       },
       {
@@ -811,7 +925,7 @@ export function WorkspaceApp() {
         icon: <BrainCircuit aria-hidden="true" size={20} strokeWidth={2.1} />
       }
     ];
-  }, [state]);
+  }, [viewState]);
 
   const filteredVault = useMemo(() => {
     const needle = query.toLowerCase().trim();
@@ -838,12 +952,12 @@ export function WorkspaceApp() {
   }, [query, state.vault]);
 
   const sourceStrategySignals = useMemo(
-    () => buildSourceStrategySignals(state.vault, state.trades),
-    [state.trades, state.vault]
+    () => buildSourceStrategySignals(viewState.vault, viewState.trades),
+    [viewState.trades, viewState.vault]
   );
   const strategyStats = useMemo(
-    () => buildStrategyStats(state, sourceStrategySignals),
-    [sourceStrategySignals, state]
+    () => buildStrategyStats(viewState, sourceStrategySignals),
+    [sourceStrategySignals, viewState]
   );
   const strategySuggestions = useMemo(
     () => strategyStats.map((stat) => stat.name).filter(Boolean),
@@ -868,17 +982,17 @@ export function WorkspaceApp() {
   const tradingInsights = useMemo(
     () =>
       buildTradingInsights(
-        state,
+        viewState,
         strategyStats,
         sourceStrategySignals,
         aiRouterStatus,
         tradeRecommendations
       ),
-    [aiRouterStatus, sourceStrategySignals, state, strategyStats, tradeRecommendations]
+    [aiRouterStatus, sourceStrategySignals, strategyStats, tradeRecommendations, viewState]
   );
   const graph = useMemo(
-    () => buildGraphModel(state, sourceStrategySignals, strategyStats),
-    [sourceStrategySignals, state, strategyStats]
+    () => buildGraphModel(viewState, sourceStrategySignals, strategyStats),
+    [sourceStrategySignals, strategyStats, viewState]
   );
   const graphNodeLookup = useMemo(
     () => new Map(graph.nodes.map((node) => [node.id, node])),
@@ -931,13 +1045,42 @@ export function WorkspaceApp() {
     if (!apiOnline) return;
     try {
       setTradeRecommendations(await api.listTradeRecommendations());
+      setOptimalStrategy(await api.getOptimalStrategy().catch(() => null));
     } catch {
       setApiOnline(false);
     }
   }
 
-  function applyTradeDraft(recommendation: TradeRecommendation) {
-    const draft = recommendation.draft;
+  async function enrichDraftWithQuote(draft: TradeDraft, tags: string[]) {
+    const symbol = draft.symbol?.trim().toUpperCase();
+    if (!symbol) return draft;
+    const side = draft.side ?? "long";
+    const fallbackEntry = draftNumber(draft.entry_price);
+    const fallbackExit = draftNumber(draft.exit_price);
+    try {
+      const quote = await api.getQuote(symbol);
+      setQuoteBySymbol((current) => ({ ...current, [quote.symbol]: quote }));
+      const entry = quotePrice(quote) ?? fallbackEntry;
+      return {
+        ...draft,
+        symbol: quote.symbol,
+        entry_price: numberString(entry),
+        exit_price: numberString(
+          fallbackExit ?? (entry ? targetExitPrice(entry, side, tags) : undefined)
+        ),
+        price_source: quote.provider,
+        price_time: quote.market_time ?? undefined
+      };
+    } catch {
+      return {
+        ...draft,
+        entry_price: numberString(fallbackEntry),
+        exit_price: numberString(fallbackExit)
+      };
+    }
+  }
+
+  function fillTradeForm(draft: TradeDraft, title: string) {
     const form = tradeFormRef.current;
     if (!draft || !form) return;
 
@@ -952,14 +1095,48 @@ export function WorkspaceApp() {
     setQuickTradeText("");
     setField("symbol", draft.symbol);
     setField("side", draft.side);
+    setField("entryDate", new Date().toISOString().slice(0, 10));
+    setField("entryPrice", draft.entry_price);
+    setField("exitPrice", draft.exit_price);
     setField("strategy", draft.strategy);
     setField("setup", draft.setup);
     setField("emotion", draft.emotion);
     setField("quantity", draft.quantity);
     setField("fees", draft.fees);
     setField("notes", draft.notes);
-    setQuickTradeMessage(`Filled trade draft from ${recommendation.title}. Add entry and exit prices before logging.`);
+    const priceMessage =
+      draft.entry_price && draft.exit_price
+        ? `Entry ${draft.entry_price}, target exit ${draft.exit_price}.`
+        : "Quote unavailable; add entry and exit prices before logging.";
+    setQuickTradeMessage(`Filled trade draft from ${title}. ${priceMessage}`);
   }
+
+  async function applyTradeDraft(recommendation: TradeRecommendation) {
+    if (!recommendation.draft) return;
+    const draft = await enrichDraftWithQuote(recommendation.draft, recommendation.technical_tags);
+    if (activeTab !== "trades") {
+      setPendingTradeDraft({ draft, title: recommendation.title });
+      setActiveTab("trades");
+      return;
+    }
+    fillTradeForm(draft, recommendation.title);
+  }
+
+  async function applyEvaluationDraft(evaluation: StrategyEvaluation) {
+    const draft = await enrichDraftWithQuote(evaluation.draft, evaluation.technical_tags);
+    if (activeTab !== "trades") {
+      setPendingTradeDraft({ draft, title: evaluation.title });
+      setActiveTab("trades");
+      return;
+    }
+    fillTradeForm(draft, evaluation.title);
+  }
+
+  useEffect(() => {
+    if (activeTab !== "trades" || !pendingTradeDraft || !tradeFormRef.current) return;
+    fillTradeForm(pendingTradeDraft.draft, pendingTradeDraft.title);
+    setPendingTradeDraft(null);
+  }, [activeTab, pendingTradeDraft]);
 
   async function saveImportedVaultItem(item: ImportedVaultItem) {
     const vaultItem = vaultItemFromImport(normalizeImportedItem(item));
@@ -1045,6 +1222,63 @@ export function WorkspaceApp() {
     event.target.value = "";
   }
 
+  async function evaluatePlainEnglishStrategy(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const idea = strategyIdea.trim();
+    if (!idea) return;
+    setStrategyEvaluationMessage("Evaluating idea against learned sources, trades, and journal memory...");
+    try {
+      const evaluation = await api.evaluateStrategyIdea(idea, strategyIdeaSymbol.trim());
+      setStrategyEvaluation(evaluation);
+      setStrategyEvaluationMessage(
+        `Decision: ${evaluation.decision}. Journaled evaluation ${evaluation.journal_entry_id ? "saved" : "not saved"}.`
+      );
+      if (apiOnline) {
+        const journal = await api.listJournal().catch(() => null);
+        if (journal) setState((current) => ({ ...current, journal }));
+      }
+    } catch {
+      const localEvaluation = buildLocalStrategyEvaluation(
+        idea,
+        strategyIdeaSymbol.trim(),
+        viewState,
+        sourceStrategySignals
+      );
+      setStrategyEvaluation(localEvaluation);
+      setStrategyEvaluationMessage("API unavailable; evaluated locally without journal sync.");
+    }
+  }
+
+  async function fillTradePricesFromQuote() {
+    const form = tradeFormRef.current;
+    if (!form) return;
+    const symbol = String(new FormData(form).get("symbol") ?? "").trim().toUpperCase();
+    if (!symbol) {
+      setQuickTradeMessage("Enter a symbol before asking for a live quote.");
+      return;
+    }
+    try {
+      const quote = await api.getQuote(symbol);
+      setQuoteBySymbol((current) => ({ ...current, [quote.symbol]: quote }));
+      const side = String(new FormData(form).get("side") ?? "long") as TradeEntry["side"];
+      const tags = uniqueTags([
+        String(new FormData(form).get("setup") ?? ""),
+        String(new FormData(form).get("strategy") ?? "")
+      ]);
+      const entry = quotePrice(quote);
+      const exit = entry ? targetExitPrice(entry, side, tags) : null;
+      if (entry) {
+        const entryField = form.elements.namedItem("entryPrice");
+        const exitField = form.elements.namedItem("exitPrice");
+        if (entryField instanceof HTMLInputElement) entryField.value = String(entry);
+        if (exitField instanceof HTMLInputElement && exit) exitField.value = String(exit);
+      }
+      setQuickTradeMessage(`Fetched ${quote.symbol} at ${formatCurrency(Number(quote.last_price))}.`);
+    } catch {
+      setQuickTradeMessage("Live quote is unavailable for that symbol right now.");
+    }
+  }
+
   // Persist a newly created record: to the API when online (using the returned
   // server row, which carries the real id), otherwise to local state only.
   async function persistCreate<T extends { id: string }>(
@@ -1101,7 +1335,7 @@ export function WorkspaceApp() {
     if (quickTrade) {
       const draft = parseQuickTrade(quickTrade);
       if (!draft) {
-        setQuickTradeMessage("Could not read that trade. Include symbol, side, entry, exit, and quantity.");
+        setQuickTradeMessage("Could not read that trade. Include symbol, side, entry, and quantity.");
         return;
       }
 
@@ -1113,17 +1347,22 @@ export function WorkspaceApp() {
 
       formEl.reset();
       setQuickTradeText("");
-      setQuickTradeMessage(`Logged ${trade.symbol} ${trade.side} for ${formatCurrency(tradePnl(trade))}.`);
+      setQuickTradeMessage(
+        isTradeClosed(trade)
+          ? `Logged ${trade.symbol} ${trade.side} for ${formatCurrency(tradePnl(trade))}.`
+          : `Opened ${trade.symbol} ${trade.side}; live marks will update while it is in progress.`
+      );
       await persistCreate("trades", trade, api.createTrade);
       return;
     }
 
     const symbol = String(form.get("symbol") ?? "").trim().toUpperCase();
     const entryPrice = Number(form.get("entryPrice"));
-    const exitPrice = Number(form.get("exitPrice"));
+    const exitRaw = String(form.get("exitPrice") ?? "").trim();
+    const exitPrice = exitRaw ? Number(exitRaw) : null;
     const quantity = Number(form.get("quantity"));
-    if (!symbol || !entryPrice || !exitPrice || !quantity) {
-      setQuickTradeMessage("Use the quick line or fill symbol, entry, exit, and quantity.");
+    if (!symbol || !entryPrice || !quantity) {
+      setQuickTradeMessage("Use the quick line or fill symbol, entry, and quantity.");
       return;
     }
 
@@ -1145,8 +1384,36 @@ export function WorkspaceApp() {
 
     formEl.reset();
     setQuickTradeText("");
-    setQuickTradeMessage(`Logged ${trade.symbol} ${trade.side} for ${formatCurrency(tradePnl(trade))}.`);
+    setQuickTradeMessage(
+      isTradeClosed(trade)
+        ? `Logged ${trade.symbol} ${trade.side} for ${formatCurrency(tradePnl(trade))}.`
+        : `Opened ${trade.symbol} ${trade.side}; live marks will update while it is in progress.`
+    );
     await persistCreate("trades", trade, api.createTrade);
+  }
+
+  async function closeTradeAtLive(trade: TradeEntry) {
+    try {
+      const quote = await api.getQuote(trade.symbol);
+      const exitPrice = quotePrice(quote);
+      if (!exitPrice) throw new Error("missing quote");
+      const updated = await api.updateTrade(trade.id, {
+        ...trade,
+        exitPrice,
+        currentPrice: exitPrice,
+        quoteProvider: quote.provider,
+        quoteTime: quote.market_time
+      });
+      setQuoteBySymbol((current) => ({ ...current, [quote.symbol]: quote }));
+      setState((current) => ({
+        ...current,
+        trades: current.trades.map((item) => (item.id === trade.id ? updated : item))
+      }));
+      setQuickTradeMessage(`Closed ${trade.symbol} at ${formatCurrency(exitPrice)}.`);
+      void refreshTradeRecommendations();
+    } catch {
+      setQuickTradeMessage(`Could not fetch a live exit for ${trade.symbol}.`);
+    }
   }
 
   async function removeItem(collection: keyof WorkspaceState, id: string) {
@@ -1615,6 +1882,10 @@ export function WorkspaceApp() {
                       <input className={textInputClass()} name="exitPrice" step="0.01" type="number" />
                     </Field>
                   </div>
+                  <Button onClick={fillTradePricesFromQuote} type="button" variant="outline">
+                    <LineChart aria-hidden="true" size={17} strokeWidth={2.2} />
+                    Use live quote
+                  </Button>
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Qty">
                       <input className={textInputClass()} name="quantity" step="0.01" type="number" />
@@ -1662,6 +1933,52 @@ export function WorkspaceApp() {
                 <section className="rounded-lg border border-line bg-card/86 p-4 shadow-panel">
                   <div className="flex items-center justify-between gap-4">
                     <div>
+                      <h2 className="text-base font-semibold text-ink">Strategy Idea Evaluator</h2>
+                      <p className="mt-1 text-sm text-ink/58">
+                        Score a plain-English idea against learned sources, trades, and journal memory
+                      </p>
+                    </div>
+                    <BrainCircuit aria-hidden="true" className="text-signal" size={20} strokeWidth={2.1} />
+                  </div>
+                  <form className="mt-4 grid gap-3" onSubmit={evaluatePlainEnglishStrategy}>
+                    <Field label="Strategy idea">
+                      <textarea
+                        className={textareaClass()}
+                        onChange={(event) => setStrategyIdea(event.target.value)}
+                        placeholder="Example: trade ES long when futures risk-parity momentum aligns and price reclaims VWAP, with a tight invalidation."
+                        value={strategyIdea}
+                      />
+                    </Field>
+                    <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+                      <Field label="Symbol">
+                        <input
+                          className={textInputClass()}
+                          onChange={(event) => setStrategyIdeaSymbol(event.target.value)}
+                          placeholder="optional, e.g. ES"
+                          value={strategyIdeaSymbol}
+                        />
+                      </Field>
+                      <div className="flex items-end">
+                        <Button type="submit">
+                          <Wand2 aria-hidden="true" size={17} strokeWidth={2.2} />
+                          Evaluate
+                        </Button>
+                      </div>
+                    </div>
+                  </form>
+                  <p className="mt-3 text-sm text-ink/58">{strategyEvaluationMessage}</p>
+                  {strategyEvaluation && (
+                    <StrategyEvaluationCard
+                      evaluation={strategyEvaluation}
+                      onApply={applyEvaluationDraft}
+                      title="Idea evaluation"
+                    />
+                  )}
+                </section>
+
+                <section className="rounded-lg border border-line bg-card/86 p-4 shadow-panel">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
                       <h2 className="text-base font-semibold text-ink">AI Trade Recommendations</h2>
                       <p className="mt-1 text-sm text-ink/58">
                         Based on uploaded strategies, technical tags, learned memory, and trade history
@@ -1688,7 +2005,10 @@ export function WorkspaceApp() {
                 <section className="overflow-hidden rounded-lg border border-line bg-card/86 shadow-panel">
                 <div className="border-b border-line px-4 py-3">
                   <h2 className="text-base font-semibold text-ink">Trades</h2>
-                  <p className="mt-1 text-sm text-ink/58">{state.trades.length} closed trades</p>
+                  <p className="mt-1 text-sm text-ink/58">
+                    {viewState.trades.filter((trade) => !isTradeClosed(trade)).length} open /{" "}
+                    {viewState.trades.filter(isTradeClosed).length} closed
+                  </p>
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full min-w-[760px] border-collapse text-left text-sm">
@@ -1698,14 +2018,17 @@ export function WorkspaceApp() {
                         <th className="px-4 py-3">Symbol</th>
                         <th className="px-4 py-3">Side</th>
                         <th className="px-4 py-3">Strategy</th>
+                        <th className="px-4 py-3">Mark</th>
                         <th className="px-4 py-3">P&L</th>
-                        <th className="px-4 py-3">State</th>
+                        <th className="px-4 py-3">Status</th>
                         <th className="px-4 py-3" />
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-line">
-                      {state.trades.map((trade) => {
+                      {viewState.trades.map((trade) => {
                         const pnl = tradePnl(trade);
+                        const closed = isTradeClosed(trade);
+                        const mark = tradeMarkPrice(trade);
 
                         return (
                           <tr key={trade.id}>
@@ -1713,6 +2036,9 @@ export function WorkspaceApp() {
                             <td className="px-4 py-3 font-semibold text-ink">{trade.symbol}</td>
                             <td className="px-4 py-3 capitalize text-ink/68">{trade.side}</td>
                             <td className="px-4 py-3 text-ink/68">{trade.strategy || "Untitled"}</td>
+                            <td className="px-4 py-3 text-ink/68">
+                              {mark ? formatCurrency(mark) : "waiting quote"}
+                            </td>
                             <td
                               className={[
                                 "px-4 py-3 font-semibold",
@@ -1721,8 +2047,22 @@ export function WorkspaceApp() {
                             >
                               {formatCurrency(pnl)}
                             </td>
-                            <td className="px-4 py-3 text-ink/68">{trade.emotion}</td>
-                            <td className="px-4 py-3 text-right">
+                            <td className="px-4 py-3 text-ink/68">
+                              <Badge variant={closed ? "secondary" : "warning"}>
+                                {closed ? "closed" : "open"}
+                              </Badge>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex justify-end gap-1">
+                              {!closed && (
+                                <button
+                                  className="rounded-md px-2 py-1 text-xs font-semibold text-signal transition hover:bg-paper"
+                                  onClick={() => void closeTradeAtLive(trade)}
+                                  type="button"
+                                >
+                                  Close live
+                                </button>
+                              )}
                               <button
                                 className="rounded-md p-2 text-ink/45 transition hover:bg-paper hover:text-loss"
                                 onClick={() => removeItem("trades", trade.id)}
@@ -1731,6 +2071,7 @@ export function WorkspaceApp() {
                               >
                                 <Trash2 aria-hidden="true" size={17} />
                               </button>
+                              </div>
                             </td>
                           </tr>
                         );
@@ -1771,6 +2112,15 @@ export function WorkspaceApp() {
                     <InsightCard insight={insight} key={insight.title} />
                   ))}
                 </div>
+                {optimalStrategy && (
+                  <div className="mt-4">
+                    <StrategyEvaluationCard
+                      evaluation={optimalStrategy}
+                      onApply={applyEvaluationDraft}
+                      title="Optimal knowledge-base strategy"
+                    />
+                  </div>
+                )}
               </section>
 
               <section className="overflow-hidden rounded-lg border border-line bg-card/86 shadow-panel">
@@ -2211,6 +2561,75 @@ function InsightCard({ insight }: { insight: TradingInsight }) {
   );
 }
 
+function StrategyEvaluationCard({
+  evaluation,
+  onApply,
+  title
+}: {
+  evaluation: StrategyEvaluation;
+  onApply: (evaluation: StrategyEvaluation) => void;
+  title: string;
+}) {
+  const toneClass =
+    evaluation.decision === "beneficial"
+      ? "border-moss/25 bg-moss/10"
+      : evaluation.decision === "weakens-edge"
+        ? "border-loss/25 bg-loss/10"
+        : "border-caution/30 bg-caution/10";
+
+  return (
+    <article className={`mt-4 rounded-lg border p-4 ${toneClass}`}>
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/48">{title}</p>
+          <h3 className="mt-2 text-sm font-semibold text-ink">{evaluation.title}</h3>
+          <p className="mt-1 text-xs font-medium text-ink/52">
+            {evaluation.decision} / {Math.round(evaluation.score * 100)}% score
+          </p>
+        </div>
+        <Badge variant={evaluation.decision === "beneficial" ? "default" : "warning"}>
+          AI
+        </Badge>
+      </div>
+      <p className="mt-3 text-sm leading-6 text-ink/66">{evaluation.rationale}</p>
+      {evaluation.technical_tags.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {essentialTechnicalTags(evaluation.technical_tags).map(tagChip)}
+        </div>
+      )}
+      <details className="mt-3 rounded-md border border-line bg-card/70 px-3 py-2 text-sm">
+        <summary className="cursor-pointer font-semibold text-ink">Why included / excluded</summary>
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-moss">Included</p>
+            <ul className="mt-2 grid gap-1 text-ink/66">
+              {evaluation.included.slice(0, 5).map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-loss">Excluded</p>
+            <ul className="mt-2 grid gap-1 text-ink/66">
+              {evaluation.excluded.slice(0, 5).map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </details>
+      <button
+        className="mt-3 inline-flex min-h-9 items-center gap-2 rounded-md border border-caution/30 bg-card px-3 text-sm font-semibold text-ink transition hover:bg-caution/15"
+        onClick={() => onApply(evaluation)}
+        type="button"
+      >
+        <Wand2 aria-hidden="true" size={16} strokeWidth={2.2} />
+        Fill trade draft
+      </button>
+    </article>
+  );
+}
+
 function TradeRecommendationCard({
   recommendation,
   onApply
@@ -2423,6 +2842,80 @@ function buildLabelStats(trades: TradeEntry[], labelFor: (trade: TradeEntry) => 
       };
     })
     .sort((a, b) => b.totalPnl - a.totalPnl);
+}
+
+function buildLocalStrategyEvaluation(
+  idea: string,
+  symbol: string,
+  state: WorkspaceState,
+  sourceSignals: SourceStrategySignal[]
+): StrategyEvaluation {
+  const profile = technicalProfileForText(idea);
+  const tags = uniqueTags([
+    ...technicalTagsForProfile(profile),
+    ...singleWordTags.filter((tag) => new RegExp(`\\b${tag}\\b`, "i").test(idea)),
+    ...semanticTagRules.filter(([phrase]) => idea.toLowerCase().includes(phrase)).map(([, tag]) => tag)
+  ]).sort();
+  const relatedSources = sourceSignals.filter((signal) =>
+    signal.tags.some((tag) => tags.some((candidate) => labelsOverlap(candidate, tag)))
+  );
+  const relatedTrades = state.trades.filter((trade) =>
+    [trade.strategy, trade.setup, trade.notes].some((value) =>
+      tags.some((tag) => labelsOverlap(value, tag))
+    )
+  );
+  const closedRelated = relatedTrades.filter(isTradeClosed);
+  const avgPnl = averagePnl(closedRelated);
+  const score = Math.max(
+    0.05,
+    Math.min(
+      0.95,
+      0.36 +
+        Math.min(0.24, relatedSources.length * 0.06) +
+        Math.min(0.16, tags.length * 0.015) +
+        (avgPnl > 0 ? 0.12 : avgPnl < 0 ? -0.12 : 0)
+    )
+  );
+  const decision =
+    !tags.length ? "needs-structure" : score >= 0.68 ? "beneficial" : score >= 0.48 ? "observe" : "weakens-edge";
+  const setup = profile.setups?.[0] ?? setupRules.find(([phrase]) => idea.toLowerCase().includes(phrase))?.[1];
+  const tradeSymbol = symbol || (tags.includes("futures") ? "ES" : tags.includes("crypto") ? "BTC" : "SPY");
+  const side: TradeEntry["side"] = /\b(short|fade|breakdown|sell)\b/i.test(idea) ? "short" : "long";
+  const title = idea.split(".")[0].slice(0, 90) || setup || "Plain-English strategy idea";
+  const included = [
+    setup ? `Setup extracted: ${setup}.` : "",
+    tags.length ? `Technicals extracted: ${tags.slice(0, 8).join(", ")}.` : "",
+    relatedSources.length ? `${relatedSources.length} source signal(s) overlap.` : "",
+    closedRelated.length ? `${closedRelated.length} related closed trade(s), average ${formatCurrency(avgPnl)}.` : ""
+  ].filter(Boolean);
+  const excluded = [
+    tags.length ? "" : "No concrete technical tags were found.",
+    relatedSources.length ? "" : "No learned source strongly supports this idea yet.",
+    closedRelated.length ? "" : "No matching closed-trade sample exists for validation.",
+    /\b(risk|stop|invalidation|size)\b/i.test(idea) ? "" : "Risk or invalidation was not explicit."
+  ].filter(Boolean);
+
+  return {
+    title,
+    decision,
+    score,
+    confidence: score,
+    rationale: `${decision} at ${Math.round(score * 100)}% score. ${included[0] ?? excluded[0] ?? ""}`,
+    technical_tags: tags,
+    technical_profile: profile,
+    included: included.length ? included : ["Idea captured locally."],
+    excluded,
+    draft: {
+      symbol: tradeSymbol,
+      side,
+      strategy: title,
+      setup: setup ?? "Source-backed setup",
+      emotion: "patient",
+      quantity: "1",
+      fees: "0",
+      notes: `${decision} local evaluation. Tags: ${tags.slice(0, 6).join(", ")}.`
+    }
+  };
 }
 
 function buildTradingInsights(
@@ -2643,15 +3136,16 @@ function parseQuickTrade(raw: string): QuickTradeDraft | null {
     .replace(/->|@|x/gi, " ");
   const numbers = (numericText.match(/\b\d+(?:\.\d+)?\b/g) ?? []).map(Number);
   const entryPrice = Number(entryMatch?.[1] ?? numbers[0]);
-  const exitPrice = Number(exitMatch?.[1] ?? numbers[1]);
-  const quantity = Number(qtyMatch?.[1] ?? numbers[2]);
+  const hasInlineExit = Boolean(exitMatch?.[1]) || /->/.test(text);
+  const exitPrice = hasInlineExit && numbers[1] ? Number(exitMatch?.[1] ?? numbers[1]) : null;
+  const quantity = Number(qtyMatch?.[1] ?? (exitPrice === null ? numbers[1] : numbers[2]));
   const fees = Number(feesMatch?.[1] ?? 0);
   const strategy = labeledValue(text, ["strategy", "strat", "system"]);
   const setup = labeledValue(text, ["setup", "playbook", "pattern"]);
   const emotion = labeledValue(text, ["state", "emotion", "mood"]) || "focused";
   const notes = labeledValue(text, ["notes", "note", "why"]) || text;
 
-  if (!symbol || !entryPrice || !exitPrice || !quantity) return null;
+  if (!symbol || !entryPrice || !quantity) return null;
 
   return {
     symbol,

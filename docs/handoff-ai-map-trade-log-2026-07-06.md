@@ -51,6 +51,23 @@ Follow-up: 2026-07-07
 - Added recommendation draft fill: each recommendation can now provide symbol,
   side, strategy, setup, emotion, quantity, fees, notes, and quick-text context,
   and the UI can apply that draft directly into the trade form.
+- Added delayed live quote support through `/api/v1/trades/quotes/{symbol}`.
+  The current adapter uses Yahoo chart data without requiring a key and is
+  isolated behind `services/market_data.py` so it can be swapped for a broker or
+  dedicated market-data provider later.
+- Added open/in-progress trade support. `exit_price` can be null, open rows are
+  marked with live quotes in the UI, and rows can be closed at the latest quote
+  through `PATCH /api/v1/trades/{trade_id}`.
+- Recommendation and strategy-evaluation drafts now fill entry and exit prices
+  when a quote is available, so the user can immediately log or paper-log a
+  trade.
+- Added `/api/v1/trades/strategy/optimal` to synthesize the current best
+  knowledge-base strategy from learned sources and trade history, including
+  included/excluded rationale and a draft.
+- Added `/api/v1/trades/strategy/evaluate` for plain-English strategy ideas.
+  It assigns technical tags/profile, scores whether the idea is beneficial,
+  observational, or edge-weakening, returns included/excluded reasons, produces
+  a trade draft, and writes the evaluation into the journal by default.
 - Updated README and environment docs.
 
 ## Verification
@@ -83,6 +100,24 @@ All passed. Live checks against the running local API also confirmed:
   and updates learned memory graph counts.
 - `GET /api/v1/trades/recommendations` returns a Risk parity recommendation
   with an `ES long` draft sourced from the learned paper.
+
+Re-run on 2026-07-07 after live quote, open trade, optimal-strategy, and
+plain-English evaluator work:
+
+```bash
+cd services/api && .venv/bin/ruff check app tests
+cd services/api && .venv/bin/pytest
+npm --prefix apps/web run typecheck
+npm --prefix apps/web run lint
+```
+
+All passed. Live checks against the running local API confirmed:
+
+- `GET /api/v1/trades/strategy/optimal` returns included/excluded rationale and
+  quote-backed entry/exit draft prices.
+- `POST /api/v1/trades/strategy/evaluate` returns technical tags/profile,
+  included/excluded rationale, quote-backed draft prices, and a journal entry id.
+- The Next dev server responds at `http://localhost:3000/` after the UI changes.
 
 ## AI Router Notes
 

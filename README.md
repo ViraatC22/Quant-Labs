@@ -45,12 +45,21 @@ Current app functionality:
 - Route source enrichment through deterministic local rules by default, with
   opt-in provider routing for OpenRouter, Groq, Gemini, and Cerebras keys.
 - Log journal entries, emotional state, and routine completion.
-- Log closed trades through detailed fields or a compact one-line quick entry,
-  then calculate P&L, win-rate, setup, state, and strategy metrics.
+- Log closed or in-progress trades through detailed fields or a compact
+  one-line quick entry, then calculate realized and live-marked P&L, win-rate,
+  setup, state, and strategy metrics.
+- Fetch delayed live quotes through the market-data adapter to fill entry/target
+  exits, mark open trades, and close in-progress trades from the trade table.
 - Generate trade recommendations from uploaded strategies, extracted
   technicals, learned source memory, and matching closed-trade history.
 - Fill the trade form from a source-backed recommendation draft, including
-  symbol, side, strategy, setup, quantity, fees, emotion, and notes.
+  symbol, side, strategy, setup, quote-backed entry/exit prices, quantity, fees,
+  emotion, and notes.
+- Evaluate plain-English strategy ideas against the current knowledge base,
+  assign technical tags, explain included/excluded evidence, fill a trade draft
+  when useful, and log the AI evaluation into the journal.
+- Generate an optimal knowledge-base strategy card with an included/excluded
+  rationale dropdown and a trade-draft handoff.
 - Blend imported source insights into the current strategy scoreboard so new
   sources create research candidates and influence existing strategy nodes.
 - Move through a dynamic strategy graph with pan, zoom, focus, node detail, and

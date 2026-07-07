@@ -90,7 +90,11 @@ export type TradeEntry = {
   side: "long" | "short";
   entryDate: string;
   entryPrice: number;
-  exitPrice: number;
+  exitPrice: number | null;
+  currentPrice?: number | null;
+  quoteProvider?: string | null;
+  quoteTime?: string | null;
+  status?: "open" | "closed";
   quantity: number;
   fees: number;
   strategy: string;
@@ -119,9 +123,38 @@ export type TradeRecommendation = {
     emotion?: string;
     quantity?: string;
     fees?: string;
+    entry_price?: string;
+    exit_price?: string;
+    price_source?: string;
+    price_time?: string;
     notes?: string;
     quick_text?: string;
   };
+};
+
+export type MarketQuote = {
+  symbol: string;
+  provider_symbol: string;
+  provider: string;
+  last_price: string;
+  previous_close?: string | null;
+  currency?: string | null;
+  market_time?: string | null;
+  delayed: boolean;
+};
+
+export type StrategyEvaluation = {
+  title: string;
+  decision: "beneficial" | "observe" | "weakens-edge" | "needs-structure" | string;
+  score: number;
+  confidence: number;
+  rationale: string;
+  technical_tags: string[];
+  technical_profile: Record<string, string[]>;
+  included: string[];
+  excluded: string[];
+  draft: NonNullable<TradeRecommendation["draft"]>;
+  journal_entry_id?: string | null;
 };
 
 export type WorkspaceState = {

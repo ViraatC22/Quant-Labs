@@ -1,6 +1,11 @@
+from datetime import UTC, datetime
+from decimal import Decimal
+
 from fastapi.testclient import TestClient
 
+from app.api.v1 import trades as trades_api
 from app.main import create_app
+from app.services.market_data import MarketQuote
 
 client = TestClient(create_app())
 
@@ -113,3 +118,97 @@ def test_records_are_scoped_per_user() -> None:
         client.delete(f"/api/v1/trades/{trade_id}", headers={"x-user-id": other_user}).status_code
         == 404
     )
+
+
+def test_open_trade_can_be_closed_with_patch() -> None:
+    created = client.post(
+        "/api/v1/trades",
+        json={
+            "symbol": "SPY",
+            "side": "long",
+            "entry_time": "2026-07-07T00:00:00Z",
+            "entry_price": "100",
+            "quantity": "2",
+            "metadata": {"strategy": "Live test", "setup": "Quote mark"},
+        },
+    )
+
+    assert created.status_code == 201
+    created_body = created.json()
+    assert created_body["exit_price"] is None
+    assert created_body["pnl_amount"] is None
+
+    updated = client.patch(
+        f"/api/v1/trades/{created_body['id']}",
+        json={"exit_price": "105", "metadata": {"status": "closed"}},
+    )
+
+    assert updated.status_code == 200
+    updated_body = updated.json()
+    assert Decimal(updated_body["pnl_amount"]) == Decimal("10.000000")
+    assert updated_body["metadata"]["status"] == "closed"
+
+
+def test_quote_endpoint_uses_market_data_adapter(monkeypatch) -> None:
+    def fake_quote(symbol: str) -> MarketQuote:
+        return MarketQuote(
+            symbol=symbol.upper(),
+            provider_symbol=symbol.upper(),
+            provider="test",
+            last_price=Decimal("101.25"),
+            previous_close=Decimal("100.00"),
+            currency="USD",
+            market_time=datetime(2026, 7, 7, 14, 30, tzinfo=UTC),
+        )
+
+    monkeypatch.setattr(trades_api, "fetch_market_quote", fake_quote)
+
+    response = client.get("/api/v1/trades/quotes/spy")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["symbol"] == "SPY"
+    assert Decimal(body["last_price"]) == Decimal("101.2500")
+    assert body["provider"] == "test"
+
+
+def test_strategy_evaluation_scores_idea_and_logs_journal(monkeypatch) -> None:
+    def fake_quote(symbol: str) -> MarketQuote:
+        return MarketQuote(
+            symbol=symbol.upper(),
+            provider_symbol=symbol.upper(),
+            provider="test",
+            last_price=Decimal("5000"),
+            currency="USD",
+            market_time=datetime(2026, 7, 7, 14, 30, tzinfo=UTC),
+        )
+
+    monkeypatch.setattr(trades_api, "fetch_market_quote", fake_quote)
+    document = client.post(
+        "/api/v1/vault/documents",
+        json={
+            "title": "VWAP reclaim playbook",
+            "document_type": "strategy",
+            "content_text": "Use VWAP pullback with momentum, stop loss, and position sizing.",
+            "metadata": {"tags": ["vwap", "momentum"]},
+        },
+    )
+    assert document.status_code == 201
+
+    evaluation = client.post(
+        "/api/v1/trades/strategy/evaluate",
+        json={
+            "idea": "Trade ES long when momentum reclaims VWAP with a clear stop and size cap.",
+            "symbol": "ES",
+        },
+    )
+
+    assert evaluation.status_code == 200
+    body = evaluation.json()
+    assert body["journal_entry_id"]
+    assert "vwap" in body["technical_tags"]
+    assert Decimal(body["draft"]["entry_price"]) == Decimal("5000")
+    assert body["draft"]["exit_price"]
+
+    journal = client.get("/api/v1/vault/journal-entries").json()
+    assert any(entry["id"] == body["journal_entry_id"] for entry in journal)

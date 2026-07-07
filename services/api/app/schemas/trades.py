@@ -33,6 +33,17 @@ class TradeCreate(BaseModel):
     metadata: dict = Field(default_factory=dict)
 
 
+class TradeUpdate(BaseModel):
+    exit_time: datetime | None = None
+    exit_price: Decimal | None = None
+    fees: Decimal | None = None
+    pnl_amount: Decimal | None = None
+    pnl_r: Decimal | None = None
+    emotional_state_after: str | None = None
+    journal_summary: str | None = None
+    metadata: dict | None = None
+
+
 class TradeRead(ApiModel):
     id: UUID
     symbol: str
@@ -74,3 +85,34 @@ class TradeRecommendationRead(BaseModel):
     risk_notes: list[str] = Field(default_factory=list)
     evidence: list[str] = Field(default_factory=list)
     draft: dict = Field(default_factory=dict)
+
+
+class MarketQuoteRead(BaseModel):
+    symbol: str
+    provider_symbol: str
+    provider: str
+    last_price: Decimal
+    previous_close: Decimal | None = None
+    currency: str | None = None
+    market_time: datetime | None = None
+    delayed: bool = True
+
+
+class StrategyEvaluationRequest(BaseModel):
+    idea: str = Field(min_length=8, max_length=6000)
+    symbol: str | None = Field(default=None, max_length=32)
+    save_journal: bool = True
+
+
+class StrategyEvaluationRead(BaseModel):
+    title: str
+    decision: str
+    score: float = Field(ge=0.0, le=1.0)
+    confidence: float = Field(ge=0.0, le=1.0)
+    rationale: str
+    technical_tags: list[str] = Field(default_factory=list)
+    technical_profile: dict[str, list[str]] = Field(default_factory=dict)
+    included: list[str] = Field(default_factory=list)
+    excluded: list[str] = Field(default_factory=list)
+    draft: dict = Field(default_factory=dict)
+    journal_entry_id: UUID | None = None
