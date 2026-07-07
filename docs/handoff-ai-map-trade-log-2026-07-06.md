@@ -84,6 +84,11 @@ Follow-up: 2026-07-07
   rules and the current knowledge base.
 - Promoted the routine card into a dedicated Routine tab with source evidence,
   readiness metrics, and quick jumps to the paper ticket and journal prep.
+- Added read-more collapse sections across long generated content, source
+  details, paper abstracts, strategy rules, recommendation rationale, journal
+  entries, and atlas node detail.
+- Reworked the atlas group guides into lighter, wider abstract categories so
+  the grey sections do not visually overlap or compete with graph nodes.
 - Updated README and environment docs.
 
 ## Verification
@@ -177,6 +182,15 @@ npm --prefix apps/web run lint
 ```
 
 Both passed. Local server check confirmed `http://localhost:3000/` returns 200.
+
+Re-run on 2026-07-07 after read-more and atlas segmentation polish:
+
+```bash
+npm --prefix apps/web run typecheck
+npm --prefix apps/web run lint
+```
+
+Both passed.
 
 ## AI Router Notes
 

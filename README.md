@@ -73,7 +73,8 @@ Current app functionality:
 - Review richer insight cards covering net edge, strategy leaks, source-backed
   validation gaps, routine effect, and AI-router status.
 - Keep source technicals concise in the UI by prioritizing essential tags,
-  compact source details, and short entry/exit/risk evidence.
+  read-more sections for long generated content, compact source details, and
+  short entry/exit/risk evidence.
 - Import/export the local workspace as JSON.
 
 When the API is available, records persist to the local API database. If the API

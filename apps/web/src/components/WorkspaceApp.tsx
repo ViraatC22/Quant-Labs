@@ -212,17 +212,17 @@ const emptyState: WorkspaceState = {
 };
 
 const graphClusterGuides: GraphClusterGuide[] = [
-  { label: "Source Evidence", x: 24, y: 48, width: 220, height: 270 },
-  { label: "Strategy Layer", x: 290, y: 48, width: 210, height: 270 },
-  { label: "Execution Setups", x: 560, y: 48, width: 210, height: 270 },
-  { label: "Trade Outcomes", x: 830, y: 48, width: 200, height: 270 },
-  { label: "Journal Routine", x: 24, y: 390, width: 220, height: 180 },
-  { label: "Tags", x: 290, y: 390, width: 210, height: 180 },
-  { label: "States", x: 560, y: 390, width: 210, height: 180 },
-  { label: "Markets", x: 830, y: 390, width: 200, height: 180 }
+  { label: "Research Inputs", x: 40, y: 60, width: 250, height: 286 },
+  { label: "Strategy Logic", x: 350, y: 60, width: 236, height: 286 },
+  { label: "Execution Plan", x: 668, y: 60, width: 236, height: 286 },
+  { label: "Trade Feedback", x: 984, y: 60, width: 220, height: 286 },
+  { label: "Journal Routine", x: 40, y: 462, width: 250, height: 214 },
+  { label: "Extracted Signals", x: 350, y: 462, width: 236, height: 214 },
+  { label: "Trader State", x: 668, y: 462, width: 236, height: 214 },
+  { label: "Markets", x: 984, y: 462, width: 220, height: 214 }
 ];
-const graphCanvasWidth = 1060;
-const graphCanvasHeight = 660;
+const graphCanvasWidth = 1240;
+const graphCanvasHeight = 740;
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const textLikeExtensions = [".txt", ".md", ".markdown", ".csv", ".json", ".log", ".pine", ".py"];
@@ -504,6 +504,71 @@ function compactText(value: string, limit = 180) {
   if (value.length <= limit) return value;
   const clipped = value.slice(0, limit).replace(/\s+\S*$/, "");
   return `${clipped}...`;
+}
+
+function ReadMoreText({
+  value,
+  limit = 180,
+  className = ""
+}: {
+  value?: string | null;
+  limit?: number;
+  className?: string;
+}) {
+  if (!value) return null;
+  if (value.length <= limit) return <p className={className}>{value}</p>;
+
+  return (
+    <div className={className}>
+      <p>{compactText(value, limit)}</p>
+      <details className="mt-2 rounded-md border border-line bg-card/70 px-3 py-2">
+        <summary className="cursor-pointer text-xs font-semibold uppercase tracking-[0.12em] text-signal">
+          Read more
+        </summary>
+        <p className="mt-2 text-ink/68">{value}</p>
+      </details>
+    </div>
+  );
+}
+
+function ReadMoreList({
+  values,
+  visibleCount = 2,
+  limit = 150,
+  className = ""
+}: {
+  values: string[];
+  visibleCount?: number;
+  limit?: number;
+  className?: string;
+}) {
+  const uniqueValues = Array.from(new Set(values.filter(Boolean)));
+  if (!uniqueValues.length) return null;
+  const visibleValues = uniqueValues.slice(0, visibleCount);
+  const needsDetails =
+    uniqueValues.length > visibleCount || uniqueValues.some((value) => value.length > limit);
+
+  return (
+    <div className={className}>
+      <ul className="grid gap-1">
+        {visibleValues.map((value) => (
+          <li key={value}>{compactText(value, limit)}</li>
+        ))}
+      </ul>
+      {needsDetails && (
+        <details className="mt-2 rounded-md border border-line bg-card/70 px-3 py-2">
+          <summary className="cursor-pointer text-xs font-semibold uppercase tracking-[0.12em] text-signal">
+            Read more
+          </summary>
+          <ul className="mt-2 grid gap-1 text-ink/68">
+            {uniqueValues.map((value) => (
+              <li key={value}>{value}</li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  );
 }
 
 function essentialTechnicalTags(tags: string[], limit = 8) {
@@ -1781,9 +1846,11 @@ export function WorkspaceApp() {
                                 </span>
                               )}
                             </div>
-                            <p className="mt-2 text-sm leading-6 text-ink/68">
-                              {item.body.length > 900 ? `${item.body.slice(0, 900)}...` : item.body}
-                            </p>
+                            <ReadMoreText
+                              className="mt-2 text-sm leading-6 text-ink/68"
+                              limit={320}
+                              value={item.body}
+                            />
                             <div className="mt-3 flex flex-wrap gap-2">
                               {item.source && tagChip(item.source)}
                               {item.tags.map(tagChip)}
@@ -1942,7 +2009,11 @@ export function WorkspaceApp() {
                               </span>
                             )}
                           </div>
-                          <p className="mt-2 text-sm leading-6 text-ink/68">{entry.body}</p>
+                          <ReadMoreText
+                            className="mt-2 text-sm leading-6 text-ink/68"
+                            limit={220}
+                            value={entry.body}
+                          />
                           <div className="mt-3 flex flex-wrap gap-2">{entry.tags.map(tagChip)}</div>
                         </div>
                         <button
@@ -2359,17 +2430,18 @@ export function WorkspaceApp() {
                             {Math.round(signal.confidence * 100)}%
                           </span>
                         </div>
-                        {signal.summary && (
-                          <p className="mt-2 text-sm leading-6 text-ink/64">
-                            {compactText(signal.summary, 170)}
-                          </p>
-                        )}
+                        <ReadMoreText
+                          className="mt-2 text-sm leading-6 text-ink/64"
+                          limit={150}
+                          value={signal.summary}
+                        />
                         {signal.rules.length > 0 && (
-                          <div className="mt-2 grid gap-1 text-sm text-ink/62">
-                            {signal.rules.slice(0, 2).map((rule) => (
-                              <p key={rule}>{compactText(rule, 140)}</p>
-                            ))}
-                          </div>
+                          <ReadMoreList
+                            className="mt-2 text-sm leading-6 text-ink/62"
+                            limit={120}
+                            values={signal.rules}
+                            visibleCount={1}
+                          />
                         )}
                       </article>
                     ))}
@@ -2481,15 +2553,18 @@ export function WorkspaceApp() {
                         <SnapshotRow label="Best" value={stat.bestTrade ? formatCurrency(tradePnl(stat.bestTrade)) : "research"} />
                         <SnapshotRow label="Worst" value={stat.worstTrade ? formatCurrency(tradePnl(stat.worstTrade)) : "research"} />
                       </div>
-                      {stat.researchSummary && (
-                        <p className="mt-4 text-sm leading-6 text-ink/64">{stat.researchSummary}</p>
-                      )}
+                      <ReadMoreText
+                        className="mt-4 text-sm leading-6 text-ink/64"
+                        limit={160}
+                        value={stat.researchSummary}
+                      />
                       {stat.researchRules.length > 0 && (
-                        <div className="mt-3 grid gap-1 text-sm text-ink/62">
-                          {stat.researchRules.slice(0, 3).map((rule) => (
-                            <p key={rule}>{rule}</p>
-                          ))}
-                        </div>
+                        <ReadMoreList
+                          className="mt-3 text-sm leading-6 text-ink/62"
+                          limit={130}
+                          values={stat.researchRules}
+                          visibleCount={2}
+                        />
                       )}
                       <div className="mt-4 flex flex-wrap gap-2">
                         <Badge variant="secondary">{stat.validationState}</Badge>
@@ -2586,13 +2661,12 @@ export function WorkspaceApp() {
                     {graphClusterGuides.map((guide) => (
                       <g key={guide.label}>
                         <rect
-                          fill="#f7f3ea"
+                          fill="none"
                           height={guide.height}
-                          opacity="0.035"
                           rx="14"
                           stroke="#d8d1c3"
-                          strokeDasharray="6 8"
-                          strokeOpacity="0.18"
+                          strokeDasharray="8 10"
+                          strokeOpacity="0.2"
                           width={guide.width}
                           x={guide.x}
                           y={guide.y}
@@ -2693,7 +2767,11 @@ export function WorkspaceApp() {
                       {selectedGraphNode.type}
                     </span>
                     <h3 className="mt-3 text-lg font-semibold text-ink">{selectedGraphNode.label}</h3>
-                    <p className="mt-2 text-sm leading-6 text-ink/64">{selectedGraphNode.detail}</p>
+                    <ReadMoreText
+                      className="mt-2 text-sm leading-6 text-ink/64"
+                      limit={180}
+                      value={selectedGraphNode.detail}
+                    />
                     {selectedGraphNode.pnl !== undefined && (
                       <p
                         className={[
@@ -2808,9 +2886,11 @@ function StrategyInfoSummary({ strategyInfo }: { strategyInfo: GeneratedStrategy
       <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/48">
         Strategy Info
       </p>
-      {strategyInfo.summary && (
-        <p className="mt-2 text-sm leading-6 text-ink/68">{strategyInfo.summary}</p>
-      )}
+      <ReadMoreText
+        className="mt-2 text-sm leading-6 text-ink/68"
+        limit={180}
+        value={strategyInfo.summary}
+      />
       {detailRows.length > 0 && (
         <div className="mt-3 grid gap-2 text-sm md:grid-cols-2">
           {detailRows.map(([label, value]) => (
@@ -2864,17 +2944,20 @@ function SourceDetailsSummary({ details }: { details: SourceDetails }) {
       {subjects.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">{subjects.slice(0, 3).map(tagChip)}</div>
       )}
-      {abstract && (
-        <p className="mt-3 text-sm leading-6 text-ink/66">
-          {compactText(abstract, 260)}
-        </p>
-      )}
+      <ReadMoreText
+        className="mt-3 text-sm leading-6 text-ink/66"
+        limit={220}
+        value={abstract}
+      />
       {notes.length > 0 && (
         <div className="mt-3 grid gap-2">
           {notes.slice(0, 2).map((note) => (
-            <p key={note} className="rounded-md bg-paper/65 px-3 py-2 text-sm leading-6 text-ink/68">
-              {compactText(note, 170)}
-            </p>
+            <ReadMoreText
+              className="rounded-md bg-paper/65 px-3 py-2 text-sm leading-6 text-ink/68"
+              key={note}
+              limit={140}
+              value={note}
+            />
           ))}
         </div>
       )}
@@ -2884,16 +2967,16 @@ function SourceDetailsSummary({ details }: { details: SourceDetails }) {
 
 function StrategyRuleList({ label, values }: { label: string; values: string[] }) {
   if (!values.length) return null;
-  const conciseValues = Array.from(new Set(values.map((value) => compactText(value, 150)))).slice(0, 2);
 
   return (
     <div className="mt-3">
       <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/45">{label}</p>
-      <ul className="mt-1 grid gap-1 text-sm leading-6 text-ink/66">
-        {conciseValues.map((value) => (
-          <li key={value}>{value}</li>
-        ))}
-      </ul>
+      <ReadMoreList
+        className="mt-1 text-sm leading-6 text-ink/66"
+        limit={130}
+        values={values}
+        visibleCount={2}
+      />
     </div>
   );
 }
@@ -2918,7 +3001,11 @@ function InsightCard({ insight }: { insight: TradingInsight }) {
       <p className={`mt-3 text-2xl font-semibold leading-none ${valueClass[insight.tone]}`}>
         {insight.value}
       </p>
-      <p className="mt-3 text-sm leading-6 text-ink/66">{insight.detail}</p>
+      <ReadMoreText
+        className="mt-3 text-sm leading-6 text-ink/66"
+        limit={145}
+        value={insight.detail}
+      />
     </article>
   );
 }
@@ -2972,11 +3059,12 @@ function RoutinePlaybookCard({
             key={block.title}
           >
             <h4 className="text-sm font-semibold text-ink">{block.title}</h4>
-            <ul className="mt-2 grid gap-2 text-sm leading-6 text-ink/66">
-              {block.items.slice(0, full ? 4 : 3).map((item) => (
-                <li key={item}>{compactText(item, 150)}</li>
-              ))}
-            </ul>
+            <ReadMoreList
+              className="mt-2 text-sm leading-6 text-ink/66"
+              limit={full ? 145 : 125}
+              values={block.items}
+              visibleCount={full ? 3 : 2}
+            />
           </section>
         ))}
       </div>
@@ -3014,7 +3102,11 @@ function StrategyEvaluationCard({
           AI
         </Badge>
       </div>
-      <p className="mt-3 text-sm leading-6 text-ink/66">{evaluation.rationale}</p>
+      <ReadMoreText
+        className="mt-3 text-sm leading-6 text-ink/66"
+        limit={150}
+        value={evaluation.rationale}
+      />
       {evaluation.technical_tags.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
           {essentialTechnicalTags(evaluation.technical_tags).map(tagChip)}
@@ -3025,19 +3117,21 @@ function StrategyEvaluationCard({
         <div className="mt-3 grid gap-3 md:grid-cols-2">
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-moss">Included</p>
-            <ul className="mt-2 grid gap-1 text-ink/66">
-              {evaluation.included.slice(0, 5).map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
+            <ReadMoreList
+              className="mt-2 text-ink/66"
+              limit={130}
+              values={evaluation.included}
+              visibleCount={3}
+            />
           </div>
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-loss">Excluded</p>
-            <ul className="mt-2 grid gap-1 text-ink/66">
-              {evaluation.excluded.slice(0, 5).map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
+            <ReadMoreList
+              className="mt-2 text-ink/66"
+              limit={130}
+              values={evaluation.excluded}
+              visibleCount={3}
+            />
           </div>
         </div>
       </details>
@@ -3071,19 +3165,28 @@ function TradeRecommendationCard({
         </div>
         <Badge variant="warning">AI</Badge>
       </div>
-      <p className="mt-3 text-sm font-medium leading-6 text-ink">{recommendation.action}</p>
-      <p className="mt-2 text-sm leading-6 text-ink/64">{recommendation.rationale}</p>
+      <ReadMoreText
+        className="mt-3 text-sm font-medium leading-6 text-ink"
+        limit={135}
+        value={recommendation.action}
+      />
+      <ReadMoreText
+        className="mt-2 text-sm leading-6 text-ink/64"
+        limit={145}
+        value={recommendation.rationale}
+      />
       {recommendation.technical_tags.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
           {essentialTechnicalTags(recommendation.technical_tags).map(tagChip)}
         </div>
       )}
       {recommendation.risk_notes.length > 0 && (
-        <div className="mt-3 border-l-2 border-loss/30 pl-3 text-sm leading-6 text-ink/64">
-          {recommendation.risk_notes.slice(0, 2).map((note) => (
-            <p key={note}>{note}</p>
-          ))}
-        </div>
+        <ReadMoreList
+          className="mt-3 border-l-2 border-loss/30 pl-3 text-sm leading-6 text-ink/64"
+          limit={120}
+          values={recommendation.risk_notes}
+          visibleCount={1}
+        />
       )}
       {recommendation.evidence.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-2">
@@ -3963,14 +4066,14 @@ function positionGraphNodes(nodes: GraphNode[]): PositionedGraphNode[] {
     { x: number; y: number; columns: number; colGap: number; rowGap: number }
   > = {
     memory: { x: graphCanvasWidth / 2, y: graphCanvasHeight / 2, columns: 1, colGap: 0, rowGap: 0 },
-    source: { x: 134, y: 190, columns: 2, colGap: 104, rowGap: 54 },
-    strategy: { x: 395, y: 190, columns: 2, colGap: 98, rowGap: 54 },
-    setup: { x: 665, y: 190, columns: 2, colGap: 98, rowGap: 54 },
-    trade: { x: 930, y: 190, columns: 3, colGap: 60, rowGap: 52 },
-    journal: { x: 134, y: 480, columns: 2, colGap: 104, rowGap: 46 },
-    tag: { x: 395, y: 480, columns: 3, colGap: 62, rowGap: 42 },
-    emotion: { x: 665, y: 480, columns: 2, colGap: 98, rowGap: 46 },
-    symbol: { x: 930, y: 480, columns: 2, colGap: 82, rowGap: 46 }
+    source: { x: 165, y: 218, columns: 2, colGap: 118, rowGap: 58 },
+    strategy: { x: 468, y: 218, columns: 2, colGap: 106, rowGap: 58 },
+    setup: { x: 786, y: 218, columns: 2, colGap: 106, rowGap: 58 },
+    trade: { x: 1094, y: 218, columns: 3, colGap: 66, rowGap: 54 },
+    journal: { x: 165, y: 570, columns: 2, colGap: 118, rowGap: 48 },
+    tag: { x: 468, y: 570, columns: 3, colGap: 68, rowGap: 44 },
+    emotion: { x: 786, y: 570, columns: 2, colGap: 106, rowGap: 48 },
+    symbol: { x: 1094, y: 570, columns: 2, colGap: 86, rowGap: 48 }
   };
   const types: GraphNodeType[] = [
     "memory",
