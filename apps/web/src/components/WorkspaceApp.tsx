@@ -387,7 +387,9 @@ function formatCurrency(value: number) {
 }
 
 function quotePrice(quote: MarketQuote | undefined) {
-  return quote ? Number(quote.last_price) : null;
+  if (!quote) return null;
+  const price = Number(quote.last_price);
+  return Number.isFinite(price) ? price : null;
 }
 
 function isTradeClosed(trade: TradeEntry) {
@@ -754,7 +756,7 @@ export function WorkspaceApp() {
   const [query, setQuery] = useState("");
   const [vaultUrl, setVaultUrl] = useState("");
   const [quickTradeText, setQuickTradeText] = useState("");
-  const [quickTradeMessage, setQuickTradeMessage] = useState("Paste one line like: AAPL long 100 -> 110 x10 strategy VWAP setup ORB.");
+  const [quickTradeMessage, setQuickTradeMessage] = useState("Paste one line like: AAPL long 100 x10 strategy VWAP setup ORB.");
   const [importStatus, setImportStatus] = useState<{
     tone: "idle" | "loading" | "success" | "error";
     message: string;
@@ -891,9 +893,23 @@ export function WorkspaceApp() {
     [markedTrades, state]
   );
 
+  const openPaperTrades = useMemo(
+    () => viewState.trades.filter((trade) => !isTradeClosed(trade)),
+    [viewState.trades]
+  );
+
+  const openPaperPnl = useMemo(
+    () => openPaperTrades.reduce((sum, trade) => sum + tradePnl(trade), 0),
+    [openPaperTrades]
+  );
+
+  const openPaperNotional = useMemo(
+    () => openPaperTrades.reduce((sum, trade) => sum + trade.entryPrice * trade.quantity, 0),
+    [openPaperTrades]
+  );
+
   const metrics = useMemo(() => {
     const closedTrades = viewState.trades.filter(isTradeClosed);
-    const openTrades = viewState.trades.filter((trade) => !isTradeClosed(trade));
     const netPnl = viewState.trades.reduce((sum, trade) => sum + tradePnl(trade), 0);
     const wins = closedTrades.filter((trade) => tradePnl(trade) > 0).length;
     const winRate = closedTrades.length ? Math.round((wins / closedTrades.length) * 100) : 0;
@@ -909,13 +925,13 @@ export function WorkspaceApp() {
       {
         label: "Trades",
         value: String(viewState.trades.length),
-        detail: `${openTrades.length} open / ${winRate}% win`,
+        detail: `${openPaperTrades.length} open / ${winRate}% win`,
         icon: <Activity aria-hidden="true" size={20} strokeWidth={2.1} />
       },
       {
         label: "P&L",
         value: formatCurrency(netPnl),
-        detail: openTrades.length ? "realized + open marks" : "closed trades",
+        detail: openPaperTrades.length ? "realized + open marks" : "closed trades",
         icon: <LineChart aria-hidden="true" size={20} strokeWidth={2.1} />
       },
       {
@@ -925,7 +941,7 @@ export function WorkspaceApp() {
         icon: <BrainCircuit aria-hidden="true" size={20} strokeWidth={2.1} />
       }
     ];
-  }, [viewState]);
+  }, [openPaperTrades, viewState]);
 
   const filteredVault = useMemo(() => {
     const needle = query.toLowerCase().trim();
@@ -1325,6 +1341,64 @@ export function WorkspaceApp() {
 
     formEl.reset();
     await persistCreate("journal", entry, api.createJournal);
+  }
+
+  async function placeLivePaperTrade() {
+    const formEl = tradeFormRef.current;
+    if (!formEl) return;
+
+    const form = new FormData(formEl);
+    const symbol = String(form.get("symbol") ?? "").trim().toUpperCase();
+    const quantity = Number(form.get("quantity"));
+    if (!symbol || !quantity) {
+      setQuickTradeMessage("Enter a symbol and quantity before placing a live paper trade.");
+      return;
+    }
+
+    setQuickTradeMessage(`Fetching a live paper fill for ${symbol}...`);
+    try {
+      const quote = await api.getQuote(symbol);
+      const entryPrice = quotePrice(quote);
+      if (entryPrice === null) throw new Error("missing quote");
+
+      const side = String(form.get("side") ?? "long") as TradeEntry["side"];
+      const quoteTime = quote.market_time ?? new Date().toISOString();
+      const rawNotes = String(form.get("notes") ?? "").trim();
+      const executionNote = `Paper market order opened at ${formatCurrency(entryPrice)} from ${quote.provider}${
+        quote.market_time ? ` (${quote.market_time})` : ""
+      }.`;
+      const trade: TradeEntry = {
+        id: newId(),
+        symbol: quote.symbol,
+        side,
+        entryDate: String(form.get("entryDate") || quoteTime.slice(0, 10)),
+        entryPrice,
+        exitPrice: null,
+        currentPrice: entryPrice,
+        quoteProvider: quote.provider,
+        quoteTime: quote.market_time,
+        status: "open",
+        orderType: "paper_market",
+        paperOrder: true,
+        quantity,
+        fees: Number(form.get("fees")) || 0,
+        strategy: String(form.get("strategy") ?? "").trim(),
+        setup: String(form.get("setup") ?? "").trim(),
+        emotion: String(form.get("emotion") ?? "focused"),
+        notes: [rawNotes, executionNote].filter(Boolean).join("\n"),
+        createdAt: new Date().toISOString()
+      };
+
+      setQuoteBySymbol((current) => ({ ...current, [quote.symbol]: quote }));
+      formEl.reset();
+      setQuickTradeText("");
+      setQuickTradeMessage(
+        `Placed paper ${trade.side} ${trade.symbol} x${trade.quantity} at ${formatCurrency(entryPrice)}.`
+      );
+      await persistCreate("trades", trade, api.createTrade);
+    } catch {
+      setQuickTradeMessage(`Could not place ${symbol}; live quote is unavailable right now.`);
+    }
   }
 
   async function addTrade(event: FormEvent<HTMLFormElement>) {
@@ -1829,7 +1903,7 @@ export function WorkspaceApp() {
                 ref={tradeFormRef}
               >
                 <div className="flex items-center justify-between">
-                  <h2 className="text-base font-semibold text-ink">Trade Log</h2>
+                  <h2 className="text-base font-semibold text-ink">Paper Trade Ticket</h2>
                   <Activity aria-hidden="true" className="text-signal" size={20} strokeWidth={2.1} />
                 </div>
                 <div className="mt-4 grid gap-3">
@@ -1839,7 +1913,7 @@ export function WorkspaceApp() {
                         className={`${textareaClass()} min-h-24`}
                         name="quickTrade"
                         onChange={(event) => setQuickTradeText(event.target.value)}
-                        placeholder="AAPL long 100 -> 110 x10 strategy VWAP setup ORB notes clean reclaim"
+                        placeholder="AAPL long 100 x10 strategy VWAP setup ORB notes clean reclaim"
                         value={quickTradeText}
                       />
                     </Field>
@@ -1882,10 +1956,16 @@ export function WorkspaceApp() {
                       <input className={textInputClass()} name="exitPrice" step="0.01" type="number" />
                     </Field>
                   </div>
-                  <Button onClick={fillTradePricesFromQuote} type="button" variant="outline">
-                    <LineChart aria-hidden="true" size={17} strokeWidth={2.2} />
-                    Use live quote
-                  </Button>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <Button onClick={fillTradePricesFromQuote} type="button" variant="outline">
+                      <LineChart aria-hidden="true" size={17} strokeWidth={2.2} />
+                      Use live quote
+                    </Button>
+                    <Button onClick={placeLivePaperTrade} type="button">
+                      <Activity aria-hidden="true" size={17} strokeWidth={2.3} />
+                      Place live paper trade
+                    </Button>
+                  </div>
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Qty">
                       <input className={textInputClass()} name="quantity" step="0.01" type="number" />
@@ -1924,12 +2004,88 @@ export function WorkspaceApp() {
                   </Field>
                   <Button type="submit">
                     <Plus aria-hidden="true" size={17} strokeWidth={2.3} />
-                    Log trade
+                    Log manual trade
                   </Button>
                 </div>
               </form>
 
               <div className="grid gap-4">
+                <section className="rounded-lg border border-line bg-card/86 p-4 shadow-panel">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <h2 className="text-base font-semibold text-ink">Open Paper Positions</h2>
+                      <p className="mt-1 text-sm text-ink/58">
+                        Live marks refresh every 30 seconds while the API is online
+                      </p>
+                    </div>
+                    <Activity aria-hidden="true" className="text-signal" size={20} strokeWidth={2.1} />
+                  </div>
+                  <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                    <div className="border-l-2 border-signal pl-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-ink/45">Open</p>
+                      <p className="mt-1 text-lg font-semibold text-ink">{openPaperTrades.length}</p>
+                    </div>
+                    <div className="border-l-2 border-line pl-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-ink/45">Notional</p>
+                      <p className="mt-1 text-lg font-semibold text-ink">{formatCurrency(openPaperNotional)}</p>
+                    </div>
+                    <div className="border-l-2 border-line pl-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-ink/45">Unrealized</p>
+                      <p className={["mt-1 text-lg font-semibold", openPaperPnl >= 0 ? "text-moss" : "text-loss"].join(" ")}>
+                        {formatCurrency(openPaperPnl)}
+                      </p>
+                    </div>
+                  </div>
+                  {openPaperTrades.length ? (
+                    <div className="mt-4 divide-y divide-line border-y border-line">
+                      {openPaperTrades.slice(0, 6).map((trade) => {
+                        const mark = tradeMarkPrice(trade);
+                        const pnl = tradePnl(trade);
+                        return (
+                          <div
+                            className="grid gap-3 py-3 text-sm sm:grid-cols-[1fr_auto_auto]"
+                            key={`open-${trade.id}`}
+                          >
+                            <div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-semibold text-ink">{trade.symbol}</span>
+                                <Badge variant="warning">{trade.side}</Badge>
+                                {trade.paperOrder && <Badge variant="outline">paper</Badge>}
+                              </div>
+                              <p className="mt-1 text-ink/58">
+                                {trade.strategy || "Untitled strategy"} / {trade.setup || "no setup"}
+                              </p>
+                            </div>
+                            <div className="text-ink/68 sm:text-right">
+                              <p>
+                                Entry {formatCurrency(trade.entryPrice)} / Mark{" "}
+                                {mark ? formatCurrency(mark) : "waiting quote"}
+                              </p>
+                              <p className={pnl >= 0 ? "font-semibold text-moss" : "font-semibold text-loss"}>
+                                {formatCurrency(pnl)}
+                              </p>
+                            </div>
+                            <div className="flex items-center sm:justify-end">
+                              <Button
+                                onClick={() => void closeTradeAtLive(trade)}
+                                size="sm"
+                                type="button"
+                                variant="outline"
+                              >
+                                Close live
+                              </Button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="mt-4 border-y border-line py-4 text-sm font-medium text-ink/52">
+                      No open paper positions.
+                    </div>
+                  )}
+                </section>
+
                 <section className="rounded-lg border border-line bg-card/86 p-4 shadow-panel">
                   <div className="flex items-center justify-between gap-4">
                     <div>
@@ -2011,14 +2167,16 @@ export function WorkspaceApp() {
                   </p>
                 </div>
                 <div className="overflow-x-auto">
-                  <table className="w-full min-w-[760px] border-collapse text-left text-sm">
+                  <table className="w-full min-w-[900px] border-collapse text-left text-sm">
                     <thead className="bg-paper text-xs uppercase text-ink/54">
                       <tr>
                         <th className="px-4 py-3">Date</th>
                         <th className="px-4 py-3">Symbol</th>
                         <th className="px-4 py-3">Side</th>
                         <th className="px-4 py-3">Strategy</th>
+                        <th className="px-4 py-3">Entry</th>
                         <th className="px-4 py-3">Mark</th>
+                        <th className="px-4 py-3">Qty</th>
                         <th className="px-4 py-3">P&L</th>
                         <th className="px-4 py-3">Status</th>
                         <th className="px-4 py-3" />
@@ -2036,9 +2194,11 @@ export function WorkspaceApp() {
                             <td className="px-4 py-3 font-semibold text-ink">{trade.symbol}</td>
                             <td className="px-4 py-3 capitalize text-ink/68">{trade.side}</td>
                             <td className="px-4 py-3 text-ink/68">{trade.strategy || "Untitled"}</td>
+                            <td className="px-4 py-3 text-ink/68">{formatCurrency(trade.entryPrice)}</td>
                             <td className="px-4 py-3 text-ink/68">
                               {mark ? formatCurrency(mark) : "waiting quote"}
                             </td>
+                            <td className="px-4 py-3 text-ink/68">{trade.quantity}</td>
                             <td
                               className={[
                                 "px-4 py-3 font-semibold",
@@ -2049,7 +2209,7 @@ export function WorkspaceApp() {
                             </td>
                             <td className="px-4 py-3 text-ink/68">
                               <Badge variant={closed ? "secondary" : "warning"}>
-                                {closed ? "closed" : "open"}
+                                {closed ? "closed" : trade.paperOrder ? "paper open" : "open"}
                               </Badge>
                             </td>
                             <td className="px-4 py-3">

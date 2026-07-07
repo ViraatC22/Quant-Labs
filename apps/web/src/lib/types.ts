@@ -95,6 +95,8 @@ export type TradeEntry = {
   quoteProvider?: string | null;
   quoteTime?: string | null;
   status?: "open" | "closed";
+  orderType?: "manual" | "paper_market" | string;
+  paperOrder?: boolean;
   quantity: number;
   fees: number;
   strategy: string;

@@ -75,6 +75,8 @@ function tradeFromDto(dto: TradeDto): TradeEntry {
     quoteProvider: String(meta.quoteProvider ?? ""),
     quoteTime: String(meta.quoteTime ?? ""),
     status: dto.exit_price === null ? "open" : "closed",
+    orderType: typeof meta.orderType === "string" ? meta.orderType : "manual",
+    paperOrder: Boolean(meta.paperOrder),
     quantity: Number(dto.quantity),
     fees: Number(dto.fees),
     strategy: String(meta.strategy ?? ""),
@@ -107,7 +109,12 @@ export async function createTrade(trade: TradeEntry): Promise<TradeEntry> {
       setup: trade.setup,
       emotion: trade.emotion,
       notes: trade.notes,
-      status: trade.exitPrice === null ? "open" : "closed"
+      status: trade.exitPrice === null ? "open" : "closed",
+      currentPrice: trade.currentPrice,
+      quoteProvider: trade.quoteProvider,
+      quoteTime: trade.quoteTime,
+      orderType: trade.orderType ?? "manual",
+      paperOrder: Boolean(trade.paperOrder)
     }
   };
   const dto = await request<TradeDto>("/api/v1/trades", {
@@ -118,22 +125,26 @@ export async function createTrade(trade: TradeEntry): Promise<TradeEntry> {
 }
 
 export async function updateTrade(id: string, trade: Partial<TradeEntry>): Promise<TradeEntry> {
-  const body = {
-    exit_price: trade.exitPrice === undefined || trade.exitPrice === null ? null : String(trade.exitPrice),
-    fees: trade.fees === undefined ? undefined : String(trade.fees),
-    emotional_state_after: trade.emotion,
-    journal_summary: trade.notes,
-    metadata: {
-      strategy: trade.strategy,
-      setup: trade.setup,
-      emotion: trade.emotion,
-      notes: trade.notes,
-      status: trade.exitPrice === null ? "open" : "closed",
-      currentPrice: trade.currentPrice,
-      quoteProvider: trade.quoteProvider,
-      quoteTime: trade.quoteTime
-    }
-  };
+  const metadata: Json = {};
+  if (trade.strategy !== undefined) metadata.strategy = trade.strategy;
+  if (trade.setup !== undefined) metadata.setup = trade.setup;
+  if (trade.emotion !== undefined) metadata.emotion = trade.emotion;
+  if (trade.notes !== undefined) metadata.notes = trade.notes;
+  if (trade.status !== undefined) metadata.status = trade.status;
+  if (trade.exitPrice !== undefined) metadata.status = trade.exitPrice === null ? "open" : "closed";
+  if (trade.currentPrice !== undefined) metadata.currentPrice = trade.currentPrice;
+  if (trade.quoteProvider !== undefined) metadata.quoteProvider = trade.quoteProvider;
+  if (trade.quoteTime !== undefined) metadata.quoteTime = trade.quoteTime;
+  if (trade.orderType !== undefined) metadata.orderType = trade.orderType;
+  if (trade.paperOrder !== undefined) metadata.paperOrder = trade.paperOrder;
+
+  const body: Json = {};
+  if (trade.exitPrice !== undefined) body.exit_price = trade.exitPrice === null ? null : String(trade.exitPrice);
+  if (trade.fees !== undefined) body.fees = String(trade.fees);
+  if (trade.emotion !== undefined) body.emotional_state_after = trade.emotion;
+  if (trade.notes !== undefined) body.journal_summary = trade.notes;
+  if (Object.keys(metadata).length) body.metadata = metadata;
+
   const dto = await request<TradeDto>(`/api/v1/trades/${id}`, {
     method: "PATCH",
     body: JSON.stringify(body)

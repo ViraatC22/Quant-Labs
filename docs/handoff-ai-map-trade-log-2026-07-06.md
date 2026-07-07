@@ -58,6 +58,10 @@ Follow-up: 2026-07-07
 - Added open/in-progress trade support. `exit_price` can be null, open rows are
   marked with live quotes in the UI, and rows can be closed at the latest quote
   through `PATCH /api/v1/trades/{trade_id}`.
+- Added a live paper-trade ticket action. The trade form can now place a paper
+  market order at the latest quote, persist provider/time/order metadata, show
+  the open position in an active book, refresh live marks, and close the
+  position at the current quote.
 - Recommendation and strategy-evaluation drafts now fill entry and exit prices
   when a quote is available, so the user can immediately log or paper-log a
   trade.
@@ -118,6 +122,21 @@ All passed. Live checks against the running local API confirmed:
 - `POST /api/v1/trades/strategy/evaluate` returns technical tags/profile,
   included/excluded rationale, quote-backed draft prices, and a journal entry id.
 - The Next dev server responds at `http://localhost:3000/` after the UI changes.
+
+Re-run on 2026-07-07 after live paper-trade ticket work:
+
+```bash
+cd services/api && .venv/bin/ruff check app tests
+cd services/api && .venv/bin/pytest
+npm --prefix apps/web run typecheck
+npm --prefix apps/web run lint
+```
+
+All passed. Local server checks confirmed:
+
+- `GET /health` returns `{"status":"ok","service":"api","environment":"local"}`.
+- `GET /api/v1/trades/quotes/AAPL` returns a delayed `yahoo_chart` quote.
+- The Next dev server responds at `http://localhost:3000/`.
 
 ## AI Router Notes
 

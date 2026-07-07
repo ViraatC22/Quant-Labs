@@ -50,6 +50,9 @@ Current app functionality:
   setup, state, and strategy metrics.
 - Fetch delayed live quotes through the market-data adapter to fill entry/target
   exits, mark open trades, and close in-progress trades from the trade table.
+- Place live paper trades from the ticket at the latest quote, keep them open
+  in an active positions panel, refresh marks while they are in progress, and
+  close them at the current quote.
 - Generate trade recommendations from uploaded strategies, extracted
   technicals, learned source memory, and matching closed-trade history.
 - Fill the trade form from a source-backed recommendation draft, including
