@@ -34,6 +34,8 @@ from app.services.ai_router import (
 from app.services.source_learning import delete_source_learning, learn_from_source_document
 from app.services.technical_extraction import (
     extract_technical_profile,
+    extract_technical_tags,
+    is_technical_tag,
     technical_tags_from_profile,
 )
 
@@ -488,16 +490,62 @@ def _import_bytes(raw: bytes, source: str, content_type: str) -> VaultImportRead
 
 
 def _document_read(document: SourceDocument) -> SourceDocumentRead:
+    metadata = _document_metadata(document)
     return SourceDocumentRead(
         id=document.id,
         title=document.title,
         document_type=document.document_type,
         uri=document.uri,
         content_text=document.content_text,
-        metadata=document.source_metadata,
+        metadata=metadata,
         created_at=document.created_at,
         updated_at=document.updated_at,
     )
+
+
+def _document_metadata(document: SourceDocument) -> dict:
+    metadata = dict(document.source_metadata or {})
+    text = " ".join([document.title, document.document_type, document.content_text or ""])
+    profile = metadata.get("technical_profile")
+    if not isinstance(profile, dict) or not profile:
+        profile = extract_technical_profile(text)
+
+    tags = {
+        str(tag).strip().lower()
+        for tag in metadata.get("technical_tags", [])
+        if str(tag).strip()
+    }
+    tags.update(extract_technical_tags(text))
+    tags.update(
+        str(tag).strip().lower()
+        for tag in metadata.get("tags", [])
+        if str(tag).strip() and is_technical_tag(str(tag))
+    )
+
+    if profile:
+        metadata["technical_profile"] = profile
+    if tags:
+        metadata["technical_tags"] = sorted(tags)
+
+    strategy_info = metadata.get("strategyInfo") or metadata.get("strategy_info")
+    if isinstance(strategy_info, dict) and (profile or tags):
+        enriched_strategy = dict(strategy_info)
+        enriched_strategy.setdefault("technical_profile", profile)
+        enriched_strategy["technical_tags"] = sorted(
+            {
+                *[
+                    str(tag).strip().lower()
+                    for tag in enriched_strategy.get("technical_tags", [])
+                    if str(tag).strip()
+                ],
+                *tags,
+            }
+        )
+        if "strategyInfo" in metadata:
+            metadata["strategyInfo"] = enriched_strategy
+        metadata["strategy_info"] = enriched_strategy
+
+    return metadata
 
 
 def _journal_read(entry: JournalEntry) -> JournalEntryRead:
