@@ -101,6 +101,7 @@ class MarketQuoteRead(BaseModel):
     currency: str | None = None
     market_time: datetime | None = None
     delayed: bool = True
+    stale: bool = False
 
 
 class StrategyEvaluationRequest(BaseModel):

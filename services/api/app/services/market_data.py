@@ -1,11 +1,27 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import os
+import threading
+import time
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from urllib.parse import quote
 from urllib.request import Request, urlopen
+
+from app.core.logging import get_logger
+
+logger = get_logger("app.market_data")
+
+# Server-side cache TTL. Every UI client polls open positions every 30s; without
+# this each poll hit the upstream provider directly (per client, per symbol),
+# which is both slow and a fast route to a provider ban. One cached fetch now
+# serves every client within the window.
+QUOTE_CACHE_TTL_SECONDS = float(os.getenv("QUOTE_CACHE_TTL_SECONDS", "20"))
+# How long a cached value may still be served as a stale fallback when the
+# upstream provider is failing, so an outage degrades to stale marks not 502s.
+QUOTE_STALE_MAX_SECONDS = float(os.getenv("QUOTE_STALE_MAX_SECONDS", "900"))
 
 
 @dataclass(frozen=True)
@@ -18,6 +34,17 @@ class MarketQuote:
     currency: str | None = None
     market_time: datetime | None = None
     delayed: bool = True
+    stale: bool = False
+
+
+@dataclass
+class _CacheEntry:
+    quote: MarketQuote
+    fetched_at: float
+
+
+_cache: dict[str, _CacheEntry] = {}
+_cache_lock = threading.Lock()
 
 
 SYMBOL_ALIASES = {
@@ -39,6 +66,39 @@ SYMBOL_ALIASES = {
 
 
 def fetch_market_quote(symbol: str) -> MarketQuote:
+    """Return a quote, served from a short-lived server cache when fresh.
+
+    On a cache miss the upstream provider is called. If that fails but a recent
+    cached value exists (within QUOTE_STALE_MAX_SECONDS), the stale value is
+    returned with ``stale=True`` instead of raising, so a provider outage
+    degrades gracefully.
+    """
+    normalized = _normalize_symbol(symbol)
+    now = time.monotonic()
+
+    with _cache_lock:
+        entry = _cache.get(normalized)
+        if entry and now - entry.fetched_at < QUOTE_CACHE_TTL_SECONDS:
+            return entry.quote
+
+    try:
+        quote_value = _fetch_from_provider(normalized)
+    except (OSError, TimeoutError, ValueError) as exc:
+        with _cache_lock:
+            entry = _cache.get(normalized)
+            if entry and now - entry.fetched_at < QUOTE_STALE_MAX_SECONDS:
+                logger.warning(
+                    "quote provider failed for %s; serving stale cache: %s", normalized, exc
+                )
+                return replace(entry.quote, stale=True)
+        raise
+
+    with _cache_lock:
+        _cache[normalized] = _CacheEntry(quote=quote_value, fetched_at=time.monotonic())
+    return quote_value
+
+
+def _fetch_from_provider(symbol: str) -> MarketQuote:
     normalized = _normalize_symbol(symbol)
     provider_symbol = SYMBOL_ALIASES.get(normalized, normalized)
     url = (

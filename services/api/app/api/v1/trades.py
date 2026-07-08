@@ -73,6 +73,7 @@ def _quote_read(quote: MarketQuote) -> MarketQuoteRead:
         currency=quote.currency,
         market_time=quote.market_time,
         delayed=quote.delayed,
+        stale=quote.stale,
     )
 
 

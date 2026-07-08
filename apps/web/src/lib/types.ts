@@ -183,6 +183,7 @@ export type MarketQuote = {
   currency?: string | null;
   market_time?: string | null;
   delayed: boolean;
+  stale?: boolean;
 };
 
 export type StrategyEvaluation = {
