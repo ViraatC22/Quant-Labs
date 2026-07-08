@@ -7,11 +7,24 @@ def _csv_env(name: str, default: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def _bool_env(name: str, default: bool) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass(frozen=True)
 class Settings:
     app_name: str = "Trading Intelligence OS API"
     app_version: str = "0.1.0"
     app_env: str = os.getenv("APP_ENV", "local")
+    # The x-user-id header is a placeholder identity with no auth. It is only
+    # trusted in local dev (where multi-user scoping is exercised in tests);
+    # any non-local deployment must ignore it until real auth lands.
+    trust_user_header: bool = _bool_env(
+        "TRUST_USER_HEADER", os.getenv("APP_ENV", "local") == "local"
+    )
     # Local dev/test default to SQLite so the API runs without Docker/Postgres.
     # docker-compose and production set DATABASE_URL explicitly to PostgreSQL.
     database_url: str = os.getenv("DATABASE_URL", "sqlite:///./quant_labs_dev.db")

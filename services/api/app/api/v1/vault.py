@@ -34,6 +34,7 @@ from app.services.ai_router import (
     provider_status,
     router_mode,
 )
+from app.services.safe_fetch import SsrfError, safe_urlopen
 from app.services.source_learning import delete_source_learning, learn_from_source_document
 from app.services.technical_extraction import (
     extract_technical_profile,
@@ -1091,15 +1092,19 @@ def import_url(payload: VaultUrlImportRequest) -> VaultImportRead:
     if arxiv_import:
         return arxiv_import
 
-    request = Request(
-        payload.url,
-        headers={"User-Agent": "QuantLabsVaultImporter/0.1 (+local-first research vault)"},
-    )
-
     try:
-        with urlopen(request, timeout=10) as response:
+        with safe_urlopen(
+            payload.url,
+            timeout=10,
+            headers={"User-Agent": "QuantLabsVaultImporter/0.1 (+local-first research vault)"},
+        ) as response:
             content_type = response.headers.get("content-type", "application/octet-stream")
             raw = response.read(MAX_IMPORT_BYTES + 1)
+    except SsrfError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
     except HTTPError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
