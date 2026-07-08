@@ -433,6 +433,11 @@ const technicalRules: Record<string, Array<readonly [RegExp, string, string]>> =
 };
 
 function newId() {
+  // Real UUIDs so offline-created records can be replayed idempotently against
+  // the UUID-validated API (see the sync queue). Falls back for old runtimes.
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID();
+  }
   return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 }
 

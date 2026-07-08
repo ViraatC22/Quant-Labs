@@ -42,6 +42,7 @@ def _trade_read(trade: Trade) -> TradeRead:
         entry_price=trade.entry_price,
         exit_price=trade.exit_price,
         quantity=trade.quantity,
+        contract_multiplier=trade.contract_multiplier,
         fees=trade.fees,
         pnl_amount=trade.pnl_amount,
         pnl_r=trade.pnl_r,
@@ -101,12 +102,13 @@ def _compute_pnl(
     entry_price: Decimal,
     exit_price: Decimal | None,
     quantity: Decimal,
+    contract_multiplier: Decimal,
     fees: Decimal,
 ) -> Decimal | None:
     if exit_price is None:
         return None
     direction = Decimal("1") if side == "long" else Decimal("-1")
-    return (exit_price - entry_price) * quantity * direction - fees
+    return (exit_price - entry_price) * quantity * contract_multiplier * direction - fees
 
 
 def _user_sources_and_trades(
@@ -150,7 +152,16 @@ def create_trade(
             entry_price=payload.entry_price,
             exit_price=payload.exit_price,
             quantity=payload.quantity,
+            contract_multiplier=payload.contract_multiplier,
             fees=payload.fees,
+        )
+
+    # Honor a client-supplied UUID so an offline-created trade replays
+    # idempotently once the API is reachable again (see the sync queue).
+    if payload.id is not None and db.get(Trade, payload.id) is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A trade with this id already exists.",
         )
 
     trade = Trade(
@@ -163,6 +174,7 @@ def create_trade(
         entry_price=payload.entry_price,
         exit_price=payload.exit_price,
         quantity=payload.quantity,
+        contract_multiplier=payload.contract_multiplier,
         fees=payload.fees,
         pnl_amount=pnl_amount,
         pnl_r=payload.pnl_r,
@@ -179,6 +191,8 @@ def create_trade(
         journal_summary=payload.journal_summary,
         trade_metadata=payload.metadata,
     )
+    if payload.id is not None:
+        trade.id = payload.id
     db.add(trade)
     db.commit()
     db.refresh(trade)
@@ -286,11 +300,15 @@ def update_trade(
     if trade is None or trade.user_id != user_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trade not found.")
 
+    fields_set = payload.model_fields_set
+
     if payload.exit_price is not None:
         trade.exit_price = payload.exit_price
         trade.exit_time = payload.exit_time or datetime.now(UTC)
     if payload.exit_time is not None:
         trade.exit_time = payload.exit_time
+    if payload.contract_multiplier is not None:
+        trade.contract_multiplier = payload.contract_multiplier
     if payload.fees is not None:
         trade.fees = payload.fees
     if payload.emotional_state_after is not None:
@@ -300,16 +318,21 @@ def update_trade(
     if payload.metadata is not None:
         trade.trade_metadata = {**(trade.trade_metadata or {}), **payload.metadata}
 
-    trade.pnl_amount = payload.pnl_amount
+    # Only touch P&L when the caller explicitly sends the field. Omitting it must
+    # not wipe a manually recorded (e.g. broker-adjusted) value.
+    if "pnl_amount" in fields_set:
+        trade.pnl_amount = payload.pnl_amount
     if trade.pnl_amount is None:
         trade.pnl_amount = _compute_pnl(
             side=trade.side,
             entry_price=trade.entry_price,
             exit_price=trade.exit_price,
             quantity=trade.quantity,
+            contract_multiplier=trade.contract_multiplier,
             fees=trade.fees,
         )
-    trade.pnl_r = payload.pnl_r if payload.pnl_r is not None else trade.pnl_r
+    if "pnl_r" in fields_set:
+        trade.pnl_r = payload.pnl_r
     db.commit()
     db.refresh(trade)
     return _trade_read(trade)

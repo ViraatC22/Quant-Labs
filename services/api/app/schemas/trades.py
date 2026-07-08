@@ -4,18 +4,21 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.core.enums import AssetClass, TradeSide
 from app.schemas.common import ApiModel
 
 
 class TradeCreate(BaseModel):
+    id: UUID | None = None  # client may supply a UUID for idempotent offline replay
     symbol: str = Field(min_length=1, max_length=32)
-    asset_class: str = Field(default="equity", max_length=64)
-    side: str = Field(min_length=1, max_length=16)
+    asset_class: AssetClass = AssetClass.equity
+    side: TradeSide
     entry_time: datetime
     exit_time: datetime | None = None
     entry_price: Decimal
     exit_price: Decimal | None = None
-    quantity: Decimal
+    quantity: Decimal = Field(gt=0)
+    contract_multiplier: Decimal = Field(default=Decimal("1"), gt=0)
     fees: Decimal = Decimal("0")
     pnl_amount: Decimal | None = None
     pnl_r: Decimal | None = None
@@ -36,6 +39,7 @@ class TradeCreate(BaseModel):
 class TradeUpdate(BaseModel):
     exit_time: datetime | None = None
     exit_price: Decimal | None = None
+    contract_multiplier: Decimal | None = Field(default=None, gt=0)
     fees: Decimal | None = None
     pnl_amount: Decimal | None = None
     pnl_r: Decimal | None = None
@@ -54,6 +58,7 @@ class TradeRead(ApiModel):
     entry_price: Decimal
     exit_price: Decimal | None
     quantity: Decimal
+    contract_multiplier: Decimal
     fees: Decimal
     pnl_amount: Decimal | None
     pnl_r: Decimal | None

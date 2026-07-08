@@ -21,6 +21,29 @@ const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 type Json = Record<string, unknown>;
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function isUuid(value: string | undefined | null): value is string {
+  return typeof value === "string" && UUID_RE.test(value);
+}
+
+// Real timestamps when the ticket supplies them, date resolution otherwise.
+// A value already carrying a time component ("2026-07-08T14:30:00Z") is passed
+// through unchanged; a bare date ("2026-07-08") is anchored to 00:00Z and the
+// trade is flagged `time_resolution: "date"` so intraday/session analytics can
+// tell true execution times from placeholders instead of trusting midnight.
+function hasTimeComponent(value: string): boolean {
+  return value.includes("T");
+}
+
+function tradeEntryTime(trade: Pick<TradeEntry, "entryDate">): string {
+  return hasTimeComponent(trade.entryDate) ? trade.entryDate : `${trade.entryDate}T00:00:00Z`;
+}
+
+function tradeExitTime(trade: Pick<TradeEntry, "entryDate">): string {
+  return tradeEntryTime(trade);
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${apiBaseUrl}${path}`, {
     ...init,
@@ -56,6 +79,7 @@ type TradeDto = {
   entry_price: string;
   exit_price: string | null;
   quantity: string;
+  contract_multiplier: string;
   fees: string;
   timeframe: string | null;
   session: string | null;
@@ -108,7 +132,8 @@ function tradeMetadata(trade: Partial<TradeEntry>): Json {
     futuresContract: trade.futuresContract,
     tickSize: trade.tickSize,
     tickValue: trade.tickValue,
-    leverage: trade.leverage
+    leverage: trade.leverage,
+    timeResolution: hasTimeComponent(trade.entryDate ?? "") ? "datetime" : "date"
   };
 }
 
@@ -131,7 +156,8 @@ function tradeFromDto(dto: TradeDto): TradeEntry {
     paperOrder: Boolean(meta.paperOrder),
     quantity: Number(dto.quantity),
     fees: Number(dto.fees),
-    contractMultiplier: metaNumber(meta, "contractMultiplier"),
+    contractMultiplier:
+      dto.contract_multiplier != null ? Number(dto.contract_multiplier) : metaNumber(meta, "contractMultiplier"),
     riskAmount:
       dto.planned_risk_amount === null ? metaNumber(meta, "riskAmount") : Number(dto.planned_risk_amount),
     stopPrice: metaNumber(meta, "stopPrice"),
@@ -163,15 +189,19 @@ export async function listTrades(): Promise<TradeEntry[]> {
 }
 
 export async function createTrade(trade: TradeEntry): Promise<TradeEntry> {
+  const multiplier = trade.contractMultiplier && trade.contractMultiplier > 0 ? trade.contractMultiplier : 1;
   const body = {
+    // Send the client UUID so an offline-created trade replays idempotently.
+    id: isUuid(trade.id) ? trade.id : undefined,
     symbol: trade.symbol,
     asset_class: trade.assetClass ?? "equity",
     side: trade.side,
-    entry_time: `${trade.entryDate}T00:00:00Z`,
+    entry_time: tradeEntryTime(trade),
     entry_price: String(trade.entryPrice),
     exit_price: trade.exitPrice === null ? null : String(trade.exitPrice),
-    exit_time: trade.exitPrice === null ? null : `${trade.entryDate}T00:00:00Z`,
+    exit_time: trade.exitPrice === null ? null : tradeExitTime(trade),
     quantity: String(trade.quantity),
+    contract_multiplier: String(multiplier),
     fees: String(trade.fees),
     timeframe: trade.timeframe || null,
     session: trade.session || null,

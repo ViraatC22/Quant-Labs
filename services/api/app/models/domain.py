@@ -87,6 +87,11 @@ class Trade(TimestampMixin, Base):
     entry_price: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
     exit_price: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
     quantity: Mapped[Decimal] = mapped_column(Numeric(18, 6), nullable=False)
+    # Contract/point multiplier (options control 100 shares, futures vary by
+    # symbol). P&L must include this or non-equity trades are computed wrong.
+    contract_multiplier: Mapped[Decimal] = mapped_column(
+        Numeric(18, 6), default=1, nullable=False, server_default="1"
+    )
     fees: Mapped[Decimal] = mapped_column(Numeric(18, 6), default=0, nullable=False)
     pnl_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
     pnl_r: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
