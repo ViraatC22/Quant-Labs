@@ -297,8 +297,14 @@ def _get_or_create_node(
         query = query.where(KgNode.source_table == source_table, KgNode.source_id == source_id)
     node = db.scalar(query)
     if node:
-        node.properties = {**(node.properties or {}), **properties}
-        node.confidence = confidence
+        # Merge, don't overwrite: a shared node (tag/setup/technical/rule keyed
+        # by label) can be supported by several sources. Accumulate the set of
+        # contributing sources and keep the strongest confidence so re-importing
+        # one document never erases what the others established.
+        merged = {**(node.properties or {}), **properties}
+        merged["source_titles"] = _merge_source_titles(node.properties, properties)
+        node.properties = merged
+        node.confidence = _max_confidence(node.confidence, confidence)
         return node
 
     node = KgNode(
@@ -307,7 +313,7 @@ def _get_or_create_node(
         source_table=source_table,
         source_id=source_id,
         label=label[:240],
-        properties=properties,
+        properties={**properties, "source_titles": _merge_source_titles(None, properties)},
         confidence=confidence,
         created_by="source_learning",
     )
@@ -335,9 +341,15 @@ def _get_or_create_edge(
         )
     )
     if edge:
+        # Accumulate evidence across sources instead of replacing it, so an edge
+        # supported by multiple documents keeps every provenance chunk.
+        combined = list(edge.evidence_chunk_ids or [])
+        for chunk_id in evidence_chunk_ids:
+            if chunk_id not in combined:
+                combined.append(chunk_id)
+        edge.evidence_chunk_ids = combined[:24]
+        edge.confidence = _max_confidence(edge.confidence, confidence)
         edge.properties = {"source": "source_learning"}
-        edge.evidence_chunk_ids = evidence_chunk_ids
-        edge.confidence = confidence
         return edge
 
     edge = KgEdge(
@@ -353,6 +365,23 @@ def _get_or_create_edge(
     db.add(edge)
     db.flush()
     return edge
+
+
+def _merge_source_titles(existing: dict | None, incoming: dict) -> list[str]:
+    titles: set[str] = set()
+    for blob in (existing or {}, incoming or {}):
+        for title in blob.get("source_titles", []) or []:
+            if str(title).strip():
+                titles.add(str(title).strip())
+        single = blob.get("source_title")
+        if isinstance(single, str) and single.strip():
+            titles.add(single.strip())
+    return sorted(titles)
+
+
+def _max_confidence(current: Decimal | None, incoming: Decimal | None) -> Decimal | None:
+    values = [value for value in (current, incoming) if value is not None]
+    return max(values) if values else None
 
 
 def _chunk_text(text: str) -> list[str]:
