@@ -232,9 +232,18 @@ class _HTMLTextExtractor(HTMLParser):
                 self.description = attr_map.get("content", "").strip()
         if tag in _VOID_TAGS:
             return
-        ident = f"{attr_map.get('class', '')} {attr_map.get('id', '')} {attr_map.get('role', '')}".lower()
-        is_skip = tag in _BOILERPLATE_TAGS or any(hint in ident for hint in _BOILERPLATE_HINTS)
-        is_main = tag in {"main", "article"} or any(hint in ident for hint in _MAIN_HINTS)
+        is_skip = False
+        is_main = False
+        # Root/structural tags carry framework feature-flag classes (e.g.
+        # "vector-feature-language-in-header-enabled" contains "header"), so hint
+        # matching on them would wrongly flag the whole document as chrome.
+        if tag not in {"html", "body", "head"}:
+            ident = (
+                f"{attr_map.get('class', '')} {attr_map.get('id', '')} "
+                f"{attr_map.get('role', '')}"
+            ).lower()
+            is_skip = tag in _BOILERPLATE_TAGS or any(h in ident for h in _BOILERPLATE_HINTS)
+            is_main = tag in {"main", "article"} or any(h in ident for h in _MAIN_HINTS)
         self._stack.append({"tag": tag, "skip": is_skip, "main": is_main})
 
     def handle_endtag(self, tag: str) -> None:
