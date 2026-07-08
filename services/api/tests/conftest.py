@@ -20,9 +20,12 @@ def _isolate_database():
     ranked recommendation ordering). Truncating per test makes them independent.
     """
     from app.db.base import Base
-    from app.db.session import engine
+    from app.db.session import engine, init_db
     from app.models import domain  # noqa: F401  (registers tables)
 
+    # Ensure the schema exists even for test files that never instantiate the
+    # app (e.g. pure-function tests), so truncation below has tables to clear.
+    init_db()
     with engine.begin() as connection:
         for table in reversed(Base.metadata.sorted_tables):
             connection.execute(table.delete())

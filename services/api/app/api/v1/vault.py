@@ -181,32 +181,71 @@ class ArxivMetadata:
     pdf_url: str | None = None
 
 
+# Tags whose text is site chrome, not content.
+_BOILERPLATE_TAGS = {
+    "script", "style", "noscript", "svg", "nav", "header", "footer", "aside",
+    "form", "button", "figure", "select", "option", "label",
+}
+# class/id/role substrings that mark navigation/boilerplate regions.
+_BOILERPLATE_HINTS = (
+    "nav", "menu", "sidebar", "footer", "header", "breadcrumb", "masthead",
+    "banner", "cookie", "subscribe", "newsletter", "comment", "related",
+    "promo", "advert", "social", "search", "toolbar", "site-",
+)
+# class/id substrings that mark the primary content region.
+_MAIN_HINTS = (
+    "mw-parser-output", "article-body", "article__body", "post-content",
+    "entry-content", "story-body", "post-body", "content__body",
+)
+_VOID_TAGS = {
+    "area", "base", "br", "col", "embed", "hr", "img", "input", "link",
+    "meta", "param", "source", "track", "wbr",
+}
+
+
 class _HTMLTextExtractor(HTMLParser):
+    """Extract readable article text, skipping nav/boilerplate.
+
+    Maintains a tag stack; text in a boilerplate region (nav/header/footer or an
+    element whose class/id/role hints at chrome) is dropped. If a main-content
+    region (<main>/<article> or a known content class) is seen, only text inside
+    it is kept; otherwise all non-boilerplate text is kept as a fallback.
+    """
+
     def __init__(self) -> None:
-        super().__init__()
+        super().__init__(convert_charrefs=True)
         self.title = ""
         self.description = ""
         self._in_title = False
-        self._skip_depth = 0
-        self._parts: list[str] = []
+        self._stack: list[dict] = []
+        self._main_parts: list[str] = []
+        self._all_parts: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag in {"script", "style", "noscript", "svg"}:
-            self._skip_depth += 1
+        attr_map = {key.lower(): (value or "") for key, value in attrs}
         if tag == "title":
             self._in_title = True
         if tag == "meta":
-            attr_map = {key.lower(): value or "" for key, value in attrs}
             name = attr_map.get("name", "").lower()
             prop = attr_map.get("property", "").lower()
-            if name == "description" or prop == "og:description":
+            if (name == "description" or prop == "og:description") and not self.description:
                 self.description = attr_map.get("content", "").strip()
+        if tag in _VOID_TAGS:
+            return
+        ident = f"{attr_map.get('class', '')} {attr_map.get('id', '')} {attr_map.get('role', '')}".lower()
+        is_skip = tag in _BOILERPLATE_TAGS or any(hint in ident for hint in _BOILERPLATE_HINTS)
+        is_main = tag in {"main", "article"} or any(hint in ident for hint in _MAIN_HINTS)
+        self._stack.append({"tag": tag, "skip": is_skip, "main": is_main})
 
     def handle_endtag(self, tag: str) -> None:
-        if tag in {"script", "style", "noscript", "svg"} and self._skip_depth:
-            self._skip_depth -= 1
         if tag == "title":
             self._in_title = False
+        if tag in _VOID_TAGS:
+            return
+        for index in range(len(self._stack) - 1, -1, -1):
+            if self._stack[index]["tag"] == tag:
+                del self._stack[index:]
+                break
 
     def handle_data(self, data: str) -> None:
         text = data.strip()
@@ -215,12 +254,16 @@ class _HTMLTextExtractor(HTMLParser):
         if self._in_title:
             self.title = f"{self.title} {text}".strip()
             return
-        if not self._skip_depth:
-            self._parts.append(text)
+        if any(frame["skip"] for frame in self._stack):
+            return
+        self._all_parts.append(text)
+        if any(frame["main"] for frame in self._stack):
+            self._main_parts.append(text)
 
     @property
     def text(self) -> str:
-        return _clean_text(" ".join(self._parts))
+        parts = self._main_parts if self._main_parts else self._all_parts
+        return _clean_text(" ".join(parts))
 
 
 class _ArxivAbsExtractor(HTMLParser):
@@ -294,6 +337,9 @@ class _ArxivAbsExtractor(HTMLParser):
 
 
 def _clean_text(value: str) -> str:
+    # Strip citation/edit markers common in wiki/article text ([2], [ 8 ],
+    # [edit], [citation needed]) so they don't leak into rules and summaries.
+    value = re.sub(r"\[\s*(?:\d+|edit|citation needed)\s*\]", "", value, flags=re.IGNORECASE)
     return re.sub(r"\s+", " ", value).strip()
 
 
@@ -326,11 +372,6 @@ def _decode_bytes(raw: bytes, content_type: str) -> str:
         return raw.decode(charset, errors="replace")
     except LookupError:
         return raw.decode("utf-8", errors="replace")
-
-
-def _domain_tag(url: str) -> str:
-    host = urlparse(url).netloc.lower().removeprefix("www.")
-    return host.split(":")[0] or "link"
 
 
 def _arxiv_id_from_url(url: str) -> str | None:
@@ -611,10 +652,25 @@ def _keyword_tags(text: str) -> list[str]:
     return sorted(tags)
 
 
+# Tags with no trading signal that keyword matching tends to over-produce.
+_NOISE_TAGS = {"trade", "journal", "paper", "article", "note", "strategy", "backtest"}
+MAX_TAGS = 14
+
+
+def _is_noise_tag(tag: str) -> bool:
+    # Drop domain-style tags (e.g. en.wikipedia.org) and generic meta words.
+    return "." in tag or tag in _NOISE_TAGS
+
+
+def _clean_tags(tags: set[str] | list[str], *, limit: int = MAX_TAGS) -> list[str]:
+    cleaned = sorted(
+        {tag.strip().lower() for tag in tags if tag and tag.strip() and not _is_noise_tag(tag.strip().lower())}
+    )
+    return cleaned[:limit]
+
+
 def _metadata_tags(title: str, body: str, source: str, kind: str) -> list[str]:
     tags = [kind]
-    if source.startswith("http"):
-        tags.append(_domain_tag(source))
     tags.extend(_keyword_tags(f"{title} {body[:4000]}"))
     tags.extend(technical_tags_from_profile(extract_technical_profile(f"{title} {body[:9000]}")))
     return sorted({tag for tag in tags if tag})
@@ -821,6 +877,10 @@ def _enriched_import(
         strategy_info.technical_profile if strategy_info else local_technical_profile
     )
 
+    generated_tags = _clean_tags(generated_tags)
+    technical_tags = _clean_tags(technical_tags)
+    all_tags = _clean_tags({*base_tags, *generated_tags, *source_tags})
+
     metadata = {
         **metadata,
         "generated_tags": generated_tags,
@@ -834,6 +894,7 @@ def _enriched_import(
         },
     }
     if strategy_info:
+        strategy_info.technical_tags = technical_tags
         metadata["strategy_info"] = strategy_info.model_dump()
 
     return VaultImportRead(
@@ -841,7 +902,7 @@ def _enriched_import(
         kind=kind,
         source=source,
         body=body,
-        tags=sorted({*base_tags, *generated_tags, *source_tags}),
+        tags=all_tags,
         ai_tags=generated_tags,
         strategy_info=strategy_info,
         metadata=metadata,
