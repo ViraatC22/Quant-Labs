@@ -1704,7 +1704,7 @@ export function WorkspaceApp() {
         stored.strategyInfo ? " and strategy fields" : ""
       }${
         stored.learningSummary
-          ? `; learned ${stored.learningSummary.chunk_count} chunks / ${stored.learningSummary.node_count} map nodes`
+          ? `, and linked it into your knowledge map (${stored.learningSummary.node_count} connections)`
           : ""
       }.`
     });
@@ -2340,14 +2340,6 @@ export function WorkspaceApp() {
                               {item.tags.map(tagChip)}
                             </div>
                             {sourceDetails && <SourceDetailsSummary details={sourceDetails} />}
-                            {aiTags.length > 0 && (
-                              <div className="mt-4 border-l-2 border-caution/35 pl-3">
-                                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/48">
-                                  Generated Tags
-                                </p>
-                                <div className="mt-2 flex flex-wrap gap-2">{aiTags.map(tagChip)}</div>
-                              </div>
-                            )}
                             {technicalTags.length > 0 && (
                               <div className="mt-4 border-l-2 border-signal/35 pl-3">
                                 <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/48">
@@ -4390,10 +4382,6 @@ function buildTradingInsights(
   tradeRecommendations: TradeRecommendation[]
 ): TradingInsight[] {
   const learnedSources = state.vault.filter((item) => item.learningSummary);
-  const learnedChunks = learnedSources.reduce(
-    (sum, item) => sum + (item.learningSummary?.chunk_count ?? 0),
-    0
-  );
 
   if (!state.trades.length) {
     const strategySources = sourceSignals.length;
@@ -4423,11 +4411,11 @@ function buildTradingInsights(
         tone: aiRouterStatus?.active_provider_id ? "good" : "neutral"
       },
       {
-        title: "Memory Bot",
-        value: `${learnedChunks} chunks`,
+        title: "Learned Memory",
+        value: `${learnedSources.length} source${learnedSources.length === 1 ? "" : "s"}`,
         detail: learnedSources.length
-          ? `${learnedSources.length} sources have been learned into the map.`
-          : "Sources become memory chunks and graph facts once saved through the API.",
+          ? `${learnedSources.length} sources are linked into your knowledge map.`
+          : "Saved sources are linked into your knowledge map as evidence.",
         tone: learnedSources.length ? "good" : "neutral"
       },
       {
@@ -4445,9 +4433,13 @@ function buildTradingInsights(
     ];
   }
 
-  const totalPnl = state.trades.reduce((sum, trade) => sum + tradePnl(trade), 0);
-  const wins = state.trades.filter((trade) => tradePnl(trade) > 0).length;
-  const winRate = Math.round((wins / state.trades.length) * 100);
+  // Net Edge is realized, closed-trade performance only. Open positions'
+  // unrealized marks live in the P&L tile and the Open Positions panel, so the
+  // win rate here always matches the header and never counts an open trade.
+  const closedForEdge = state.trades.filter(isTradeClosed);
+  const realizedPnl = closedForEdge.reduce((sum, trade) => sum + tradePnl(trade), 0);
+  const wins = closedForEdge.filter((trade) => tradePnl(trade) > 0).length;
+  const winRate = closedForEdge.length ? Math.round((wins / closedForEdge.length) * 100) : 0;
   const setupStats = buildLabelStats(state.trades, (trade) => trade.setup || "No setup");
   const emotionStats = buildLabelStats(state.trades, (trade) => trade.emotion || "No state");
   const bestStrategy = strategyStats[0];
@@ -4464,9 +4456,11 @@ function buildTradingInsights(
   const insights: TradingInsight[] = [
     {
       title: "Net Edge",
-      value: formatCurrency(totalPnl),
-      detail: `${state.trades.length} closed trades at ${winRate}% win rate.`,
-      tone: totalPnl > 0 ? "good" : totalPnl < 0 ? "bad" : "neutral"
+      value: formatCurrency(realizedPnl),
+      detail: closedForEdge.length
+        ? `${closedForEdge.length} closed trades at ${winRate}% win rate (realized only).`
+        : "No closed trades yet — log an exit to measure realized edge.",
+      tone: realizedPnl > 0 ? "good" : realizedPnl < 0 ? "bad" : "neutral"
     }
   ];
 
@@ -4491,9 +4485,9 @@ function buildTradingInsights(
 
   if (learnedSources.length) {
     insights.push({
-      title: "Memory Bot",
-      value: `${learnedChunks} chunks`,
-      detail: `${learnedSources.length} sources are available as graph memory and strategy evidence.`,
+      title: "Learned Memory",
+      value: `${learnedSources.length} source${learnedSources.length === 1 ? "" : "s"}`,
+      detail: "Saved sources are linked into your knowledge map as strategy evidence.",
       tone: "good"
     });
   }
