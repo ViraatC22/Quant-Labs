@@ -11,7 +11,7 @@ from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -1229,12 +1229,18 @@ def create_journal_entry(
 def list_journal_entries(
     db: Annotated[Session, Depends(get_db)],
     user_id: Annotated[UUID, Depends(get_current_user_id)],
+    limit: Annotated[int | None, Query(ge=1, le=1000)] = None,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[JournalEntryRead]:
-    entries = db.scalars(
+    query = (
         select(JournalEntry)
         .where(JournalEntry.user_id == user_id)
         .order_by(JournalEntry.entry_date.desc(), JournalEntry.created_at.desc())
-    ).all()
+        .offset(offset)
+    )
+    if limit is not None:
+        query = query.limit(limit)
+    entries = db.scalars(query).all()
     return [_journal_read(entry) for entry in entries]
 
 

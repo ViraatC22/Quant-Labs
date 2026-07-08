@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -204,10 +204,18 @@ def create_trade(
 def list_trades(
     db: Annotated[Session, Depends(get_db)],
     user_id: Annotated[UUID, Depends(get_current_user_id)],
+    limit: Annotated[int | None, Query(ge=1, le=1000)] = None,
+    offset: Annotated[int, Query(ge=0)] = 0,
 ) -> list[TradeRead]:
-    trades = db.scalars(
-        select(Trade).where(Trade.user_id == user_id).order_by(Trade.entry_time.desc())
-    ).all()
+    query = (
+        select(Trade)
+        .where(Trade.user_id == user_id)
+        .order_by(Trade.entry_time.desc())
+        .offset(offset)
+    )
+    if limit is not None:
+        query = query.limit(limit)
+    trades = db.scalars(query).all()
     return [_trade_read(trade) for trade in trades]
 
 
