@@ -77,6 +77,20 @@ class AiRouterStatus(BaseModel):
     providers: list[AiProviderStatus] = Field(default_factory=list)
 
 
+class AiProviderSelfTest(BaseModel):
+    id: str
+    label: str
+    configured: bool
+    ok: bool
+    latency_ms: int | None = None
+    error: str | None = None
+
+
+class AiSelfTestResult(BaseModel):
+    mode: str
+    providers: list[AiProviderSelfTest] = Field(default_factory=list)
+
+
 class JournalEntryCreate(BaseModel):
     entry_date: date
     title: str = Field(min_length=1, max_length=240)

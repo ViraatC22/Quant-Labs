@@ -54,8 +54,10 @@ def _providers() -> dict[str, AiProvider]:
             label="Google Gemini",
             key=settings.gemini_api_key,
             model=settings.gemini_model,
-            endpoint="https://generativelanguage.googleapis.com/v1beta/interactions",
-            protocol="gemini_interactions",
+            # Base for the REST generateContent call; the model is appended per
+            # request as `{base}/{model}:generateContent`.
+            endpoint="https://generativelanguage.googleapis.com/v1beta/models",
+            protocol="gemini_generate",
         ),
         "cerebras": AiProvider(
             id="cerebras",
@@ -144,6 +146,63 @@ def extract_strategy_with_ai(
     return None
 
 
+def self_test_providers() -> list[dict[str, Any]]:
+    """Fire a tiny canary at each configured provider and report the result.
+
+    Makes silent misconfiguration (wrong key, wrong endpoint, wrong model)
+    visible instead of a provider failing forever unnoticed.
+    """
+    providers = _providers()
+    results: list[dict[str, Any]] = []
+    for provider_id in settings.ai_provider_order:
+        provider = providers.get(provider_id)
+        if not provider:
+            continue
+        if not provider.key:
+            results.append(
+                {
+                    "id": provider.id,
+                    "label": provider.label,
+                    "configured": False,
+                    "ok": False,
+                    "latency_ms": None,
+                    "error": "no API key configured",
+                }
+            )
+            continue
+        start = time.perf_counter()
+        try:
+            extraction = _extract_with_provider(
+                provider,
+                title="Self-test",
+                kind="note",
+                source="selftest://canary",
+                body="VWAP pullback long entry on the opening range breakout with a stop below VWAP.",
+            )
+            results.append(
+                {
+                    "id": provider.id,
+                    "label": provider.label,
+                    "configured": True,
+                    "ok": extraction is not None,
+                    "latency_ms": round((time.perf_counter() - start) * 1000),
+                    "error": None,
+                }
+            )
+        except (HTTPError, URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+            results.append(
+                {
+                    "id": provider.id,
+                    "label": provider.label,
+                    "configured": True,
+                    "ok": False,
+                    "latency_ms": round((time.perf_counter() - start) * 1000),
+                    "error": f"{type(exc).__name__}: {exc}",
+                }
+            )
+    return results
+
+
 def _extract_with_provider(
     provider: AiProvider,
     *,
@@ -153,11 +212,17 @@ def _extract_with_provider(
     body: str,
 ) -> AiExtraction:
     prompt = _extraction_prompt(title=title, kind=kind, source=source, body=body)
-    if provider.protocol == "gemini_interactions":
+    if provider.protocol == "gemini_generate":
         raw = _post_json(
-            provider.endpoint,
+            f"{provider.endpoint}/{provider.model}:generateContent",
             headers={"x-goog-api-key": provider.key},
-            payload={"model": provider.model, "input": prompt},
+            payload={
+                "contents": [{"parts": [{"text": prompt}]}],
+                "generationConfig": {
+                    "temperature": 0.1,
+                    "responseMimeType": "application/json",
+                },
+            },
         )
         content = _gemini_text(raw)
     else:
@@ -220,16 +285,13 @@ def _chat_text(payload: dict[str, Any]) -> str:
 
 
 def _gemini_text(payload: dict[str, Any]) -> str:
-    output_text = payload.get("output_text")
-    if isinstance(output_text, str):
-        return output_text
-    steps = payload.get("steps")
-    if isinstance(steps, list):
+    # Response shape: candidates[].content.parts[].text
+    candidates = payload.get("candidates")
+    if isinstance(candidates, list):
         parts: list[str] = []
-        for step in steps:
-            if not isinstance(step, dict):
-                continue
-            for item in step.get("content", []):
+        for candidate in candidates:
+            content = candidate.get("content") if isinstance(candidate, dict) else None
+            for item in (content or {}).get("parts", []) if isinstance(content, dict) else []:
                 if isinstance(item, dict) and isinstance(item.get("text"), str):
                     parts.append(item["text"])
         if parts:

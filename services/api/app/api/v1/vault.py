@@ -19,7 +19,9 @@ from app.core.security import get_current_user_id
 from app.db.session import get_db
 from app.models.domain import JournalEntry, SourceDocument
 from app.schemas.vault import (
+    AiProviderSelfTest,
     AiRouterStatus,
+    AiSelfTestResult,
     JournalEntryCreate,
     JournalEntryRead,
     JournalEntryUpdate,
@@ -35,6 +37,7 @@ from app.services.ai_router import (
     extract_strategy_with_ai,
     provider_status,
     router_mode,
+    self_test_providers,
 )
 from app.services.safe_fetch import SsrfError, safe_urlopen
 from app.services.source_learning import delete_source_learning, learn_from_source_document
@@ -1075,6 +1078,15 @@ def ai_provider_status() -> AiRouterStatus:
         mode=router_mode(),
         active_provider_id=active.id if active else None,
         providers=provider_status(),
+    )
+
+
+@router.get("/ai/providers/self-test", response_model=AiSelfTestResult)
+def ai_provider_self_test() -> AiSelfTestResult:
+    """Canary each configured provider so misconfiguration is visible."""
+    return AiSelfTestResult(
+        mode=router_mode(),
+        providers=[AiProviderSelfTest(**result) for result in self_test_providers()],
     )
 
 
