@@ -2358,33 +2358,11 @@ export function WorkspaceApp() {
                   </div>
                 </div>
 
-                <div className="mt-4 rounded-md border border-line bg-card p-3">
-                  <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/48">
-                    Auto-filled fields
-                  </p>
-                  <div className="mt-3 grid gap-2 text-sm text-ink/64">
-                    <div className="flex items-center justify-between gap-3">
-                      <span>Title</span>
-                      <span className="font-medium text-ink">file/link metadata</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <span>Type</span>
-                      <span className="font-medium text-ink">MIME / extension</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <span>Body</span>
-                      <span className="font-medium text-ink">extracted text</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <span>Tags</span>
-                      <span className="font-medium text-ink">generated + source</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <span>Strategy</span>
-                      <span className="font-medium text-ink">setup + rules</span>
-                    </div>
-                  </div>
-                </div>
+                <p className="mt-4 rounded-md border border-line bg-card p-3 text-xs leading-5 text-ink/56">
+                  On capture, the title, type, extracted text, tags, and any strategy
+                  setup/entry/exit/risk rules are filled in automatically, then the source is
+                  linked into your knowledge map.
+                </p>
               </section>
 
               <section className="rounded-lg border border-line bg-card/86 shadow-panel">
