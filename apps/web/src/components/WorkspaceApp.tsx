@@ -2101,6 +2101,70 @@ export function WorkspaceApp() {
     }
   }
 
+  async function loadSampleData() {
+    if (state.vault.length || state.journal.length || state.trades.length) return;
+    const now = new Date();
+    const dayIso = (daysAgo: number) =>
+      new Date(now.getTime() - daysAgo * 86_400_000).toISOString().slice(0, 10);
+
+    const sampleVault: VaultItem = {
+      id: newId(),
+      title: "Opening range breakout playbook",
+      kind: "strategy",
+      source: "sample",
+      body:
+        "Mark the first 15-minute high and low. Go long on a break and hold above " +
+        "the range high with volume expansion; stop below the range midpoint; target " +
+        "1.5R. Skip the trade if price is below VWAP.",
+      tags: ["orb", "breakout", "vwap", "volume"],
+      createdAt: new Date().toISOString()
+    };
+
+    const sampleTrades: TradeEntry[] = [
+      {
+        id: newId(), symbol: "AAPL", assetClass: "equity", side: "long",
+        entryDate: dayIso(6), entryPrice: 210, exitPrice: 214, quantity: 20, fees: 1,
+        strategy: "VWAP Pullback", setup: "VWAP pullback", emotion: "patient",
+        notes: "Waited for the pullback to VWAP and got a clean long.",
+        createdAt: new Date().toISOString()
+      },
+      {
+        id: newId(), symbol: "SPY", assetClass: "equity", side: "long",
+        entryDate: dayIso(4), entryPrice: 545, exitPrice: 549, quantity: 10, fees: 1,
+        strategy: "Opening Range Breakout", setup: "Opening range breakout", emotion: "focused",
+        notes: "Clean break and hold above the opening range.",
+        createdAt: new Date().toISOString()
+      },
+      {
+        id: newId(), symbol: "MES", assetClass: "future", side: "long",
+        entryDate: dayIso(3), entryPrice: 5600, exitPrice: 5590, quantity: 2,
+        contractMultiplier: 5, fees: 2,
+        strategy: "Opening Range Breakout", setup: "Opening range breakout", emotion: "chased",
+        notes: "Chased the breakout late after it already ran. Should have waited for the retest.",
+        createdAt: new Date().toISOString()
+      }
+    ];
+
+    const sampleJournal: JournalEntry[] = [
+      {
+        id: newId(), date: dayIso(3), title: "Chased the ORB again",
+        emotion: "frustrated", routineDone: false,
+        body: "Entered MES late after the breakout already ran. Need to wait for the retest.",
+        tags: ["orb", "discipline"], createdAt: new Date().toISOString()
+      },
+      {
+        id: newId(), date: dayIso(6), title: "Clean VWAP session",
+        emotion: "focused", routineDone: true,
+        body: "Waited for the pullback to VWAP on AAPL and followed the plan.",
+        tags: ["vwap", "patience"], createdAt: new Date().toISOString()
+      }
+    ];
+
+    await persistCreate("vault", sampleVault, api.createDocument);
+    for (const trade of sampleTrades) await persistCreate("trades", trade, api.createTrade);
+    for (const entry of sampleJournal) await persistCreate("journal", entry, api.createJournal);
+  }
+
   function exportWorkspace() {
     const data = JSON.stringify(state, null, 2);
     const blob = new Blob([data], { type: "application/json" });
@@ -2189,6 +2253,39 @@ export function WorkspaceApp() {
               )}
             </div>
           )}
+          {hydrated &&
+            !state.vault.length &&
+            !state.journal.length &&
+            !state.trades.length && (
+              <div className="rounded-lg border border-signal/30 bg-signal/5 p-5">
+                <h2 className="text-base font-semibold text-ink">Welcome to your trading memory</h2>
+                <p className="mt-1 text-sm text-ink/70">
+                  Capture research, log paper trades, and journal your process — then watch your
+                  edge, leaks, and routine emerge in Insights.
+                </p>
+                <ol className="mt-3 list-decimal space-y-1 pl-5 text-sm text-ink/70">
+                  <li>
+                    Paste a link or upload a file in <span className="font-medium text-ink">Auto Capture</span> to
+                    learn a source.
+                  </li>
+                  <li>
+                    Log a paper trade in the <span className="font-medium text-ink">Trades</span> tab.
+                  </li>
+                  <li>
+                    Open <span className="font-medium text-ink">Insights</span> to see strategy
+                    performance and leaks.
+                  </li>
+                </ol>
+                <div className="mt-4">
+                  <Button onClick={() => void loadSampleData()} type="button">
+                    Load sample data
+                  </Button>
+                  <span className="ml-3 text-xs text-ink/50">
+                    Adds a few example trades, a note, and journal entries you can explore or delete.
+                  </span>
+                </div>
+              </div>
+            )}
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             {metrics.map((metric) => (
               <MetricTile
