@@ -84,7 +84,28 @@ Current app functionality:
 - Import/export the local workspace as JSON.
 
 When the API is available, records persist to the local API database. If the API
-is offline, the web app falls back to browser-local storage.
+is offline, writes go to a durable local queue and are optimistically shown;
+the app auto-recovers and replays the queue in order when the API returns, so no
+offline work is lost (records use client UUIDs, so replay is idempotent). P&L is
+computed server-side including the contract multiplier and rendered from the
+server, and quotes are cached server-side with a stale-value fallback.
+
+Saved sources are chunked and linked into a keyword/graph knowledge map today.
+Embedding-based semantic search and GraphRAG chat are roadmap items (see
+[`docs/architecture.md`](docs/architecture.md)), not yet shipped.
 
 The MVP is research, journaling, and paper-only experimentation. Live
 autonomous trading is intentionally out of scope.
+
+## Development
+
+```bash
+# API (from services/api): lint, type-check, test
+ruff check app tests && pyright app && pytest
+
+# Web (from apps/web): lint, type-check, unit tests, build
+npm run lint && npm run typecheck && npm test && npm run build
+```
+
+CI runs these on every push, plus a PostgreSQL job that applies the Alembic
+migrations and checks the ORM models for schema drift.
