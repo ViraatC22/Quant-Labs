@@ -24,11 +24,22 @@ import {
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { MetricTile } from "@/components/MetricTile";
+import { DashboardHeader } from "@/components/shell/DashboardHeader";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import * as api from "@/lib/api";
+import {
+  enqueue as enqueueOp,
+  flushQueue,
+  loadQueue,
+  newOp,
+  saveQueue,
+  type SyncCollection,
+  type SyncHandlers,
+  type SyncOp
+} from "@/lib/sync";
 import type {
   AiRouterStatus,
   GeneratedStrategyInfo,
@@ -240,6 +251,37 @@ const emptyState: WorkspaceState = {
   journal: [],
   trades: []
 };
+
+// Replaying the offline write queue uses the same API calls as live mutations.
+const syncHandlers: SyncHandlers = {
+  createTrade: api.createTrade,
+  createJournal: api.createJournal,
+  createDocument: api.createDocument,
+  updateTrade: api.updateTrade,
+  remove: (collection, id) =>
+    collection === "trades"
+      ? api.deleteTrade(id)
+      : collection === "journal"
+        ? api.deleteJournal(id)
+        : api.deleteDocument(id)
+};
+
+function pendingCreateRecords<T extends { id: string }>(collection: SyncCollection): T[] {
+  return loadQueue(window.localStorage)
+    .filter(
+      (op): op is Extract<SyncOp, { type: "create" }> =>
+        op.type === "create" && op.collection === collection
+    )
+    .map((op) => op.record as unknown as T);
+}
+
+// Keep still-pending local records visible after a server refresh so hydrating
+// from the API never hides work that has not synced yet (the C1 data-loss fix).
+function mergePending<T extends { id: string }>(server: T[], collection: SyncCollection): T[] {
+  const ids = new Set(server.map((record) => record.id));
+  const pending = pendingCreateRecords<T>(collection).filter((record) => !ids.has(record.id));
+  return [...pending, ...server];
+}
 
 const graphCanvasWidth = 1680;
 const graphCanvasHeight = 1040;
@@ -1044,6 +1086,8 @@ export function WorkspaceApp() {
   const [state, setState] = useState<WorkspaceState>(emptyState);
   const [hydrated, setHydrated] = useState(false);
   const [apiOnline, setApiOnline] = useState(false);
+  const [syncNotice, setSyncNotice] = useState<string | null>(null);
+  const [pendingWrites, setPendingWrites] = useState(0);
   const [aiRouterStatus, setAiRouterStatus] = useState<AiRouterStatus | null>(null);
   const [tradeRecommendations, setTradeRecommendations] = useState<TradeRecommendation[]>([]);
   const [optimalStrategy, setOptimalStrategy] = useState<StrategyEvaluation | null>(null);
@@ -1102,11 +1146,26 @@ export function WorkspaceApp() {
     }
 
     async function load() {
+      // Reflect any writes left queued from a previous offline session.
+      setPendingWrites(loadQueue(window.localStorage).length);
       const online = await api.checkHealth();
       if (cancelled) return;
 
       if (online) {
         try {
+          // Replay anything queued while offline BEFORE reading server state,
+          // so the fetched lists already include the replayed records.
+          const flush = await flushQueue(loadQueue(window.localStorage), syncHandlers);
+          saveQueue(window.localStorage, flush.remaining);
+          if (!cancelled) {
+            setPendingWrites(flush.remaining.length);
+            if (flush.dropped.length) {
+              setSyncNotice(
+                `${flush.dropped.length} queued change(s) were rejected by the server and dropped.`
+              );
+            }
+          }
+
           const [trades, journal, vault, aiStatus, recommendations, optimal] = await Promise.all([
             api.listTrades(),
             api.listJournal(),
@@ -1116,7 +1175,11 @@ export function WorkspaceApp() {
             api.getOptimalStrategy().catch(() => null)
           ]);
           if (cancelled) return;
-          setState({ vault, journal, trades });
+          setState({
+            vault: mergePending(vault, "vault"),
+            journal: mergePending(journal, "journal"),
+            trades: mergePending(trades, "trades")
+          });
           setAiRouterStatus(aiStatus);
           setTradeRecommendations(recommendations);
           setOptimalStrategy(optimal);
@@ -1147,6 +1210,56 @@ export function WorkspaceApp() {
     if (!hydrated) return;
     window.localStorage.setItem(storageKey, JSON.stringify(state));
   }, [state, hydrated]);
+
+  // Periodic health check: recover automatically when the API returns, and
+  // replay the offline write queue on the offline->online transition before
+  // re-reading server state (so nothing queued is lost).
+  useEffect(() => {
+    if (!hydrated) return;
+    let cancelled = false;
+
+    async function check() {
+      const online = await api.checkHealth();
+      if (cancelled) return;
+
+      if (online && !apiOnline) {
+        const flush = await flushQueue(loadQueue(window.localStorage), syncHandlers);
+        saveQueue(window.localStorage, flush.remaining);
+        if (cancelled) return;
+        setPendingWrites(flush.remaining.length);
+        if (flush.dropped.length) {
+          setSyncNotice(
+            `${flush.dropped.length} queued change(s) were rejected by the server and dropped.`
+          );
+        }
+        try {
+          const [trades, journal, vault, recommendations] = await Promise.all([
+            api.listTrades(),
+            api.listJournal(),
+            api.listDocuments(),
+            api.listTradeRecommendations().catch(() => [])
+          ]);
+          if (cancelled) return;
+          setState({
+            vault: mergePending(vault, "vault"),
+            journal: mergePending(journal, "journal"),
+            trades: mergePending(trades, "trades")
+          });
+          setTradeRecommendations(recommendations);
+        } catch {
+          // Reachable-but-erroring API: stay on local state until next check.
+        }
+      }
+
+      if (!cancelled) setApiOnline(online);
+    }
+
+    const intervalId = window.setInterval(check, 15000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [hydrated, apiOnline]);
 
   useEffect(() => {
     if (!hydrated || !apiOnline) return;
@@ -1722,26 +1835,56 @@ export function WorkspaceApp() {
 
   // Persist a newly created record: to the API when online (using the returned
   // server row, which carries the real id), otherwise to local state only.
+  function queueWrite(op: SyncOp) {
+    const next = enqueueOp(window.localStorage, op);
+    setPendingWrites(next.length);
+  }
+
   async function persistCreate<T extends { id: string }>(
     collection: keyof WorkspaceState,
     local: T,
     create: (item: T) => Promise<T>
   ) {
-    let stored = local;
-    if (apiOnline) {
-      try {
-        stored = await create(local);
-      } catch {
-        setApiOnline(false);
-      }
-    }
+    // Optimistically insert so the record is visible immediately.
     setState(
       (current) =>
         ({
           ...current,
-          [collection]: [stored, ...(current[collection] as unknown as T[])]
+          [collection]: [local, ...(current[collection] as unknown as T[])]
         }) as WorkspaceState
     );
+
+    async function persist() {
+      try {
+        const stored = await create(local);
+        // Replace the optimistic copy with the server's (ids already match).
+        setState(
+          (current) =>
+            ({
+              ...current,
+              [collection]: (current[collection] as unknown as T[]).map((item) =>
+                item.id === local.id ? stored : item
+              )
+            }) as WorkspaceState
+        );
+      } catch (error) {
+        if (error instanceof api.ApiError) {
+          // Server rejected it. Surface the reason and keep it locally; do NOT
+          // flip offline or queue (a retry would fail the same way).
+          setSyncNotice(`A ${collection.slice(0, -1)} was not saved to the server: ${error.message}`);
+        } else {
+          // Network failure: queue for replay and drop into offline mode.
+          queueWrite(newOp({ type: "create", collection: collection as SyncCollection, record: local as never }));
+          setApiOnline(false);
+        }
+      }
+    }
+
+    if (apiOnline) {
+      await persist();
+    } else {
+      queueWrite(newOp({ type: "create", collection: collection as SyncCollection, record: local as never }));
+    }
     void refreshTradeRecommendations();
   }
 
@@ -1931,19 +2074,28 @@ export function WorkspaceApp() {
   }
 
   async function removeItem(collection: keyof WorkspaceState, id: string) {
-    if (apiOnline) {
-      try {
-        if (collection === "trades") await api.deleteTrade(id);
-        else if (collection === "journal") await api.deleteJournal(id);
-        else await api.deleteDocument(id);
-      } catch {
-        setApiOnline(false);
-      }
-    }
+    // Optimistically remove from the view.
     setState((current) => ({
       ...current,
       [collection]: current[collection].filter((item) => item.id !== id)
     }));
+
+    if (apiOnline) {
+      try {
+        await syncHandlers.remove(collection as SyncCollection, id);
+      } catch (error) {
+        if (error instanceof api.ApiError) {
+          // 404 means it was already gone server-side — nothing to report.
+          if (error.status !== 404) setSyncNotice(`Delete failed: ${error.message}`);
+        } else {
+          queueWrite(newOp({ type: "delete", collection: collection as SyncCollection, id }));
+          setApiOnline(false);
+        }
+      }
+    } else {
+      queueWrite(newOp({ type: "delete", collection: collection as SyncCollection, id }));
+    }
+
     if (collection === "trades" || collection === "vault") {
       void refreshTradeRecommendations();
     }
@@ -1979,6 +2131,7 @@ export function WorkspaceApp() {
 
   return (
     <>
+      <DashboardHeader status={apiOnline ? "online" : "offline"} />
       <Tabs className="border-b bg-card/78 px-4 py-3 backdrop-blur">
         <TabsList className="max-w-full overflow-x-auto">
           {tabs.map((tab) => {
@@ -2011,6 +2164,31 @@ export function WorkspaceApp() {
         ].join(" ")}
       >
         <section className="space-y-6">
+          {(syncNotice || pendingWrites > 0) && (
+            <div
+              className="flex items-start justify-between gap-3 rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-200"
+              role="status"
+            >
+              <div>
+                {pendingWrites > 0 && (
+                  <p>
+                    {pendingWrites} change{pendingWrites === 1 ? "" : "s"} saved locally, waiting to
+                    sync{apiOnline ? "…" : " (API offline)"}.
+                  </p>
+                )}
+                {syncNotice && <p className="text-amber-100">{syncNotice}</p>}
+              </div>
+              {syncNotice && (
+                <button
+                  className="shrink-0 rounded px-2 py-0.5 text-xs text-amber-100/80 hover:text-amber-50"
+                  onClick={() => setSyncNotice(null)}
+                  type="button"
+                >
+                  Dismiss
+                </button>
+              )}
+            </div>
+          )}
           <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
             {metrics.map((metric) => (
               <MetricTile

@@ -21,6 +21,19 @@ const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
 type Json = Record<string, unknown>;
 
+// Thrown when the server returned an HTTP response we rejected (4xx/5xx). A
+// thrown TypeError (fetch could not reach the server) is a network failure and
+// is NOT an ApiError — the sync engine uses this distinction to decide between
+// "queue and retry" (offline) and "surface the error" (server said no).
+export class ApiError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+  }
+}
+
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function isUuid(value: string | undefined | null): value is string {
@@ -50,7 +63,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) }
   });
   if (!response.ok) {
-    throw new Error(`API ${init?.method ?? "GET"} ${path} failed: ${response.status}`);
+    let detail = "";
+    try {
+      const problem = (await response.json()) as { detail?: unknown };
+      if (typeof problem.detail === "string") detail = ` — ${problem.detail}`;
+    } catch {
+      // response had no JSON body; the status alone is the error.
+    }
+    throw new ApiError(
+      response.status,
+      `API ${init?.method ?? "GET"} ${path} failed: ${response.status}${detail}`
+    );
   }
   if (response.status === 204) return undefined as T;
   return (await response.json()) as T;
