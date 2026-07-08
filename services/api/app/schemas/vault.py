@@ -25,6 +25,13 @@ class SourceDocumentRead(ApiModel):
     updated_at: datetime
 
 
+class SourceDocumentUpdate(BaseModel):
+    title: str | None = Field(default=None, min_length=1, max_length=240)
+    document_type: str | None = Field(default=None, max_length=80)
+    content_text: str | None = None
+    metadata: dict | None = None
+
+
 class VaultUrlImportRequest(BaseModel):
     url: str = Field(min_length=1)
 
@@ -77,6 +84,15 @@ class JournalEntryCreate(BaseModel):
     emotional_state: str | None = Field(default=None, max_length=120)
     tags: list[str] = Field(default_factory=list)
     metadata: dict = Field(default_factory=dict)
+
+
+class JournalEntryUpdate(BaseModel):
+    entry_date: date | None = None
+    title: str | None = Field(default=None, min_length=1, max_length=240)
+    body: str | None = Field(default=None, min_length=1)
+    emotional_state: str | None = Field(default=None, max_length=120)
+    tags: list[str] | None = None
+    metadata: dict | None = None
 
 
 class JournalEntryRead(ApiModel):

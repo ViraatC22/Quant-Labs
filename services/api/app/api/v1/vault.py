@@ -22,8 +22,10 @@ from app.schemas.vault import (
     AiRouterStatus,
     JournalEntryCreate,
     JournalEntryRead,
+    JournalEntryUpdate,
     SourceDocumentCreate,
     SourceDocumentRead,
+    SourceDocumentUpdate,
     StrategyInfo,
     VaultImportRead,
     VaultUrlImportRequest,
@@ -1224,6 +1226,43 @@ def list_journal_entries(
     return [_journal_read(entry) for entry in entries]
 
 
+@router.patch("/documents/{document_id}", response_model=SourceDocumentRead)
+def update_document(
+    document_id: UUID,
+    payload: SourceDocumentUpdate,
+    db: Annotated[Session, Depends(get_db)],
+    user_id: Annotated[UUID, Depends(get_current_user_id)],
+) -> SourceDocumentRead:
+    document = db.get(SourceDocument, document_id)
+    if document is None or document.user_id != user_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found.")
+
+    fields = payload.model_fields_set
+    content_changed = False
+    if "title" in fields and payload.title is not None:
+        document.title = payload.title
+        content_changed = True
+    if "document_type" in fields and payload.document_type is not None:
+        document.document_type = payload.document_type
+        content_changed = True
+    if "content_text" in fields:
+        document.content_text = payload.content_text
+        content_changed = True
+    if "metadata" in fields and payload.metadata is not None:
+        document.source_metadata = {**(document.source_metadata or {}), **payload.metadata}
+
+    # Re-learn so memory chunks and graph nodes reflect the edited content
+    # instead of drifting from it. IDs are preserved (edit, not delete+create).
+    if content_changed:
+        delete_source_learning(db, document_id=document.id, user_id=user_id)
+        db.flush()
+        learn_from_source_document(db, document=document, user_id=user_id)
+
+    db.commit()
+    db.refresh(document)
+    return _document_read(document)
+
+
 @router.delete("/documents/{document_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_document(
     document_id: UUID,
@@ -1236,6 +1275,38 @@ def delete_document(
     delete_source_learning(db, document_id=document.id, user_id=user_id)
     db.delete(document)
     db.commit()
+
+
+@router.patch("/journal-entries/{entry_id}", response_model=JournalEntryRead)
+def update_journal_entry(
+    entry_id: UUID,
+    payload: JournalEntryUpdate,
+    db: Annotated[Session, Depends(get_db)],
+    user_id: Annotated[UUID, Depends(get_current_user_id)],
+) -> JournalEntryRead:
+    entry = db.get(JournalEntry, entry_id)
+    if entry is None or entry.user_id != user_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Journal entry not found."
+        )
+
+    fields = payload.model_fields_set
+    if "entry_date" in fields and payload.entry_date is not None:
+        entry.entry_date = payload.entry_date
+    if "title" in fields and payload.title is not None:
+        entry.title = payload.title
+    if "body" in fields and payload.body is not None:
+        entry.body = payload.body
+    if "emotional_state" in fields:
+        entry.emotional_state = payload.emotional_state
+    if "tags" in fields and payload.tags is not None:
+        entry.tags = payload.tags
+    if "metadata" in fields and payload.metadata is not None:
+        entry.journal_metadata = {**(entry.journal_metadata or {}), **payload.metadata}
+
+    db.commit()
+    db.refresh(entry)
+    return _journal_read(entry)
 
 
 @router.delete("/journal-entries/{entry_id}", status_code=status.HTTP_204_NO_CONTENT)

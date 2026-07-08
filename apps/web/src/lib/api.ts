@@ -345,6 +345,21 @@ export async function createJournal(entry: JournalEntry): Promise<JournalEntry> 
   return journalFromDto(dto);
 }
 
+export async function updateJournal(id: string, patch: Partial<JournalEntry>): Promise<JournalEntry> {
+  const body: Json = {};
+  if (patch.date !== undefined) body.entry_date = patch.date;
+  if (patch.title !== undefined) body.title = patch.title;
+  if (patch.body !== undefined) body.body = patch.body;
+  if (patch.emotion !== undefined) body.emotional_state = patch.emotion;
+  if (patch.tags !== undefined) body.tags = patch.tags;
+  if (patch.routineDone !== undefined) body.metadata = { routineDone: patch.routineDone };
+  const dto = await request<JournalDto>(`/api/v1/vault/journal-entries/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(body)
+  });
+  return journalFromDto(dto);
+}
+
 export async function deleteJournal(id: string): Promise<void> {
   await request<void>(`/api/v1/vault/journal-entries/${id}`, { method: "DELETE" });
 }
@@ -423,6 +438,19 @@ export async function createDocument(item: VaultItem): Promise<VaultItem> {
   };
   const dto = await request<DocumentDto>("/api/v1/vault/documents", {
     method: "POST",
+    body: JSON.stringify(body)
+  });
+  return documentFromDto(dto);
+}
+
+export async function updateDocument(id: string, patch: Partial<VaultItem>): Promise<VaultItem> {
+  const body: Json = {};
+  if (patch.title !== undefined) body.title = patch.title;
+  if (patch.kind !== undefined) body.document_type = patch.kind;
+  if (patch.body !== undefined) body.content_text = patch.body;
+  if (patch.tags !== undefined) body.metadata = { tags: patch.tags };
+  const dto = await request<DocumentDto>(`/api/v1/vault/documents/${id}`, {
+    method: "PATCH",
     body: JSON.stringify(body)
   });
   return documentFromDto(dto);
