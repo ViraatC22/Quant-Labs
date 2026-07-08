@@ -70,11 +70,15 @@ def fetch_market_quote(symbol: str) -> MarketQuote:
     if isinstance(timestamp, int | float):
         market_time = datetime.fromtimestamp(timestamp, tz=UTC)
 
+    last_price = _decimal(price)
+    if last_price is None:
+        raise ValueError(f"No market price returned for {symbol}.")
+
     return MarketQuote(
         symbol=normalized,
         provider_symbol=provider_symbol,
         provider="yahoo_chart",
-        last_price=_decimal(price),
+        last_price=last_price,
         previous_close=_decimal(meta.get("previousClose")),
         currency=meta.get("currency"),
         market_time=market_time,

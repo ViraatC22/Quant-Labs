@@ -1,11 +1,15 @@
 import json
+import time
 from dataclasses import dataclass
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from app.core.config import settings
+from app.core.logging import get_logger
 from app.schemas.vault import AiProviderStatus, StrategyInfo
+
+logger = get_logger("app.ai_router")
 
 
 @dataclass(frozen=True)
@@ -111,15 +115,31 @@ def extract_strategy_with_ai(
         provider = providers.get(provider_id)
         if not provider or not provider.key:
             continue
+        start = time.perf_counter()
         try:
-            return _extract_with_provider(
+            extraction = _extract_with_provider(
                 provider,
                 title=title,
                 kind=kind,
                 source=source,
                 body=body,
             )
-        except (HTTPError, URLError, TimeoutError, ValueError, json.JSONDecodeError):
+            logger.info(
+                "ai_extract provider=%s model=%s status=ok latency_ms=%.0f",
+                provider.id,
+                provider.model,
+                (time.perf_counter() - start) * 1000,
+            )
+            return extraction
+        except (HTTPError, URLError, TimeoutError, ValueError, json.JSONDecodeError) as exc:
+            logger.warning(
+                "ai_extract provider=%s model=%s status=failed latency_ms=%.0f error=%s: %s",
+                provider.id,
+                provider.model,
+                (time.perf_counter() - start) * 1000,
+                type(exc).__name__,
+                exc,
+            )
             continue
     return None
 
@@ -161,11 +181,13 @@ def _extract_with_provider(
         content = _chat_text(raw)
 
     payload = _parse_json_object(content)
-    title = payload.get("title")
+    extracted_title = payload.get("title")
     strategy = payload.get("strategy_info")
     tags = payload.get("tags")
     return AiExtraction(
-        title=title.strip()[:240] if isinstance(title, str) and title.strip() else None,
+        title=extracted_title.strip()[:240]
+        if isinstance(extracted_title, str) and extracted_title.strip()
+        else None,
         strategy_info=StrategyInfo.model_validate(strategy) if isinstance(strategy, dict) else None,
         tags=sorted({str(tag).strip().lower() for tag in tags if str(tag).strip()})
         if isinstance(tags, list)

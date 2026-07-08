@@ -13,6 +13,7 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.pyright/
 .coverage
 htmlcov/
 .venv/
@@ -21,3 +22,12 @@ uploads/
 local_data/
 *.log
 *.tsbuildinfo
+
+# Local databases (dev/test SQLite) must never be committed.
+*.db
+*.sqlite
+*.sqlite3
+
+# Scratch / non-product artifacts kept out of the product repo.
+/tmp/
+uv.lock

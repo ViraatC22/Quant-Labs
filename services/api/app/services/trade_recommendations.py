@@ -57,7 +57,7 @@ def _recommend_from_source(
         setup=setup,
         tags=technical_tags,
     )
-    total_pnl = sum(_trade_pnl(trade) for trade in related_trades)
+    total_pnl = sum((_trade_pnl(trade) for trade in related_trades), Decimal("0"))
     wins = sum(1 for trade in related_trades if _trade_pnl(trade) > 0)
     win_rate = wins / len(related_trades) if related_trades else 0
     source_confidence = float(strategy_info.get("confidence", 0.45)) if strategy_info else 0.35
