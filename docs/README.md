@@ -5,6 +5,7 @@ This folder is the project knowledge base. Keep product plans, architecture, set
 ## Start Here
 
 - [Project Overview](project-overview.md) — concise product summary, local development, and current app behavior.
+- [Presentation Demo Guide](presentation-demo-guide.md) — project brief, video script, demo flow, talking points, and likely Q&A.
 - [Repository Map](repository-map.md) — where the important source, config, and documentation files live.
 - [Architecture](architecture.md) — product thesis, build order, stack, and safety boundaries.
 - [Implementation Plan v2](implementation-plan-v2.md) — original long-form developer plan imported from Downloads.
