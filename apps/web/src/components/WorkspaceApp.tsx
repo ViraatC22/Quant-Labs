@@ -1161,6 +1161,7 @@ export function WorkspaceApp() {
   const [commandOpen, setCommandOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [csvImportOpen, setCsvImportOpen] = useState(false);
+  const [creatingNote, setCreatingNote] = useState(false);
   const [aiRouterStatus, setAiRouterStatus] = useState<AiRouterStatus | null>(null);
   const [tradeRecommendations, setTradeRecommendations] = useState<TradeRecommendation[]>([]);
   const [optimalStrategy, setOptimalStrategy] = useState<StrategyEvaluation | null>(null);
@@ -1435,24 +1436,28 @@ export function WorkspaceApp() {
         label: "Vault",
         value: String(viewState.vault.length),
         detail: "documents",
+        hint: "Number of captured sources (links, files, notes) in your vault.",
         icon: <BookMarked aria-hidden="true" size={20} strokeWidth={2.1} />
       },
       {
         label: "Trades",
         value: String(viewState.trades.length),
         detail: `${openPaperTrades.length} open / ${winRate}% win`,
+        hint: "Win rate is wins ÷ closed trades (open positions are excluded).",
         icon: <Activity aria-hidden="true" size={20} strokeWidth={2.1} />
       },
       {
         label: "P&L",
         value: formatCurrency(netPnl),
         detail: openPaperTrades.length ? "realized + open marks" : "closed trades",
+        hint: "Realized P&L on closed trades plus the current unrealized mark on open positions. Net of fees.",
         icon: <LineChart aria-hidden="true" size={20} strokeWidth={2.1} />
       },
       {
         label: "Memory",
         value: String(memoryCount),
         detail: "local records",
+        hint: "Total records you've captured: vault sources + journal entries + trades.",
         icon: <BrainCircuit aria-hidden="true" size={20} strokeWidth={2.1} />
       }
     ];
@@ -1966,6 +1971,20 @@ export function WorkspaceApp() {
     } else {
       queueWrite(op);
     }
+  }
+
+  async function createNote(values: { title: string; body: string; tags: string[] }) {
+    const note: VaultItem = {
+      id: newId(),
+      title: values.title || "Untitled note",
+      kind: "note",
+      source: "manual",
+      body: values.body,
+      tags: values.tags,
+      createdAt: new Date().toISOString()
+    };
+    setCreatingNote(false);
+    await persistCreate("vault", note, api.createDocument);
   }
 
   async function importParsedTrades(parsed: ParsedTrade[]) {
@@ -2482,6 +2501,7 @@ export function WorkspaceApp() {
                 label={metric.label}
                 value={metric.value}
                 detail={metric.detail}
+                hint={metric.hint}
                 icon={metric.icon}
               />
             ))}
@@ -2560,16 +2580,36 @@ export function WorkspaceApp() {
                     <h2 className="text-base font-semibold text-ink">Learning Vault</h2>
                     <p className="mt-1 text-sm text-ink/58">{filteredVault.length} records</p>
                   </div>
-                  <label className="flex min-h-10 items-center gap-2 rounded-md border border-line bg-card px-3 text-sm text-ink/62">
-                    <Search aria-hidden="true" size={17} />
-                    <input
-                      className="w-44 bg-transparent outline-none placeholder:text-ink/35"
-                      onChange={(event) => setQuery(event.target.value)}
-                      placeholder="Search"
-                      value={query}
-                    />
-                  </label>
+                  <div className="flex items-center gap-2">
+                    <Button type="button" variant="outline" onClick={() => setCreatingNote(true)}>
+                      <Plus aria-hidden="true" size={16} strokeWidth={2.3} />
+                      New note
+                    </Button>
+                    <label className="flex min-h-10 items-center gap-2 rounded-md border border-line bg-card px-3 text-sm text-ink/62">
+                      <Search aria-hidden="true" size={17} />
+                      <input
+                        className="w-40 bg-transparent outline-none placeholder:text-ink/35"
+                        onChange={(event) => setQuery(event.target.value)}
+                        placeholder="Search"
+                        value={query}
+                      />
+                    </label>
+                  </div>
                 </div>
+                {creatingNote && (
+                  <div className="border-b border-line p-4">
+                    <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/48">
+                      New note
+                    </p>
+                    <InlineEditForm
+                      initialTitle=""
+                      initialBody=""
+                      initialTags={[]}
+                      onCancel={() => setCreatingNote(false)}
+                      onSave={(values) => void createNote(values)}
+                    />
+                  </div>
+                )}
                 <div className="divide-y divide-line">
                   {filteredVault.map((item) => {
                     const aiTags = item.aiTags ?? [];

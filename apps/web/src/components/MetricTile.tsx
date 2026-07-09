@@ -7,14 +7,20 @@ type MetricTileProps = {
   value: string;
   detail: string;
   icon: ReactNode;
+  hint?: string;
 };
 
-export function MetricTile({ label, value, detail, icon }: MetricTileProps) {
+export function MetricTile({ label, value, detail, icon, hint }: MetricTileProps) {
   return (
     <ShineCard className="bg-card/82 p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">{label}</p>
+          <p
+            className={`text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground ${hint ? "cursor-help decoration-dotted underline-offset-2 hover:underline" : ""}`}
+            title={hint}
+          >
+            {label}
+          </p>
           <p className="mt-3 text-3xl font-semibold leading-none text-foreground">{value}</p>
         </div>
         <div className="flex h-10 w-10 items-center justify-center rounded-md border bg-secondary text-primary">
