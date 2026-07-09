@@ -2082,6 +2082,11 @@ export function WorkspaceApp() {
   }
 
   async function removeItem(collection: keyof WorkspaceState, id: string) {
+    const label =
+      collection === "trades" ? "trade" : collection === "journal" ? "journal entry" : "source";
+    if (typeof window !== "undefined" && !window.confirm(`Delete this ${label}? This can't be undone.`)) {
+      return;
+    }
     // Optimistically remove from the view.
     setState((current) => ({
       ...current,
@@ -2751,52 +2756,56 @@ export function WorkspaceApp() {
                         </Field>
                       </div>
 
-                        <div className="grid gap-3 border-t border-line pt-3">
-                          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/45">Options</p>
-                          <div className="grid grid-cols-2 gap-3">
-                            <Field label="Underlying">
-                              <input className={textInputClass()} name="underlyingSymbol" placeholder="AAPL" />
-                            </Field>
-                            <Field label="Expiration">
-                              <input className={textInputClass()} name="expirationDate" type="date" />
-                            </Field>
+                        {tradeAssetClass === "option" && (
+                          <div className="grid gap-3 border-t border-line pt-3">
+                            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/45">Options</p>
+                            <div className="grid grid-cols-2 gap-3">
+                              <Field label="Underlying">
+                                <input className={textInputClass()} name="underlyingSymbol" placeholder="AAPL" />
+                              </Field>
+                              <Field label="Expiration">
+                                <input className={textInputClass()} name="expirationDate" type="date" />
+                              </Field>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                              <Field label="Type">
+                                <select className={textInputClass()} name="optionType">
+                                  <option value="">Select</option>
+                                  <option value="call">Call</option>
+                                  <option value="put">Put</option>
+                                </select>
+                              </Field>
+                              <Field label="Strike">
+                                <input className={textInputClass()} name="strikePrice" step="0.01" type="number" />
+                              </Field>
+                            </div>
+                            <div className="grid grid-cols-2 gap-3">
+                              <Field label="Delta">
+                                <input className={textInputClass()} name="delta" step="0.01" type="number" />
+                              </Field>
+                              <Field label="IV %">
+                                <input className={textInputClass()} name="impliedVolatility" step="0.01" type="number" />
+                              </Field>
+                            </div>
                           </div>
-                          <div className="grid grid-cols-2 gap-3">
-                            <Field label="Type">
-                              <select className={textInputClass()} name="optionType">
-                                <option value="">Select</option>
-                                <option value="call">Call</option>
-                                <option value="put">Put</option>
-                              </select>
-                            </Field>
-                            <Field label="Strike">
-                              <input className={textInputClass()} name="strikePrice" step="0.01" type="number" />
-                            </Field>
-                          </div>
-                          <div className="grid grid-cols-2 gap-3">
-                            <Field label="Delta">
-                              <input className={textInputClass()} name="delta" step="0.01" type="number" />
-                            </Field>
-                            <Field label="IV %">
-                              <input className={textInputClass()} name="impliedVolatility" step="0.01" type="number" />
-                            </Field>
-                          </div>
-                        </div>
+                        )}
 
-                        <div className="grid gap-3 border-t border-line pt-3">
-                          <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/45">Futures</p>
-                          <Field label="Contract">
-                            <input className={textInputClass()} name="futuresContract" placeholder="ES, MES, NQ" />
-                          </Field>
-                          <div className="grid grid-cols-2 gap-3">
-                            <Field label="Tick size">
-                              <input className={textInputClass()} name="tickSize" step="0.0001" type="number" />
+                        {tradeAssetClass === "future" && (
+                          <div className="grid gap-3 border-t border-line pt-3">
+                            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/45">Futures</p>
+                            <Field label="Contract">
+                              <input className={textInputClass()} name="futuresContract" placeholder="ES, MES, NQ" />
                             </Field>
-                            <Field label="Tick value">
-                              <input className={textInputClass()} name="tickValue" step="0.01" type="number" />
-                            </Field>
+                            <div className="grid grid-cols-2 gap-3">
+                              <Field label="Tick size">
+                                <input className={textInputClass()} name="tickSize" step="0.0001" type="number" />
+                              </Field>
+                              <Field label="Tick value">
+                                <input className={textInputClass()} name="tickValue" step="0.01" type="number" />
+                              </Field>
+                            </div>
                           </div>
-                        </div>
+                        )}
                     </div>
                   </details>
                   <Field label="Strategy">
