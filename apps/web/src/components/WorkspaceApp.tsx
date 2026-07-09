@@ -25,6 +25,7 @@ import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { MetricTile } from "@/components/MetricTile";
 import { PerformancePanel } from "@/components/insights/PerformancePanel";
+import { CommandPalette } from "@/components/search/CommandPalette";
 import { DashboardHeader } from "@/components/shell/DashboardHeader";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -1097,6 +1098,7 @@ export function WorkspaceApp() {
   const [apiOnline, setApiOnline] = useState(false);
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
   const [pendingWrites, setPendingWrites] = useState(0);
+  const [commandOpen, setCommandOpen] = useState(false);
   const [aiRouterStatus, setAiRouterStatus] = useState<AiRouterStatus | null>(null);
   const [tradeRecommendations, setTradeRecommendations] = useState<TradeRecommendation[]>([]);
   const [optimalStrategy, setOptimalStrategy] = useState<StrategyEvaluation | null>(null);
@@ -1219,6 +1221,18 @@ export function WorkspaceApp() {
     if (!hydrated) return;
     window.localStorage.setItem(storageKey, JSON.stringify(state));
   }, [state, hydrated]);
+
+  // Global ⌘K / Ctrl+K to toggle the command palette.
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setCommandOpen((prev) => !prev);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // Periodic health check: recover automatically when the API returns, and
   // replay the offline write queue on the offline->online transition before
@@ -2210,7 +2224,15 @@ export function WorkspaceApp() {
   return (
     <>
       <DashboardHeader status={apiOnline ? "online" : "offline"} />
-      <Tabs className="border-b bg-card/78 px-4 py-3 backdrop-blur">
+      {commandOpen && (
+        <CommandPalette
+          state={state}
+          tabs={tabs}
+          onSelectTab={(tab) => setActiveTab(tab as TabKey)}
+          onClose={() => setCommandOpen(false)}
+        />
+      )}
+      <Tabs className="flex items-center gap-3 border-b bg-card/78 px-4 py-3 backdrop-blur">
         <TabsList className="max-w-full overflow-x-auto">
           {tabs.map((tab) => {
             const Icon = tab.icon;
@@ -2231,6 +2253,16 @@ export function WorkspaceApp() {
             );
           })}
         </TabsList>
+        <button
+          type="button"
+          onClick={() => setCommandOpen(true)}
+          className="ml-auto flex shrink-0 items-center gap-2 rounded-md border border-line bg-card px-3 py-1.5 text-sm text-ink/55 hover:text-ink"
+          aria-label="Search"
+        >
+          <Search aria-hidden="true" size={15} strokeWidth={2.2} />
+          <span className="hidden sm:inline">Search</span>
+          <kbd className="hidden rounded bg-ink/5 px-1.5 text-[11px] sm:inline">⌘K</kbd>
+        </button>
       </Tabs>
 
       <div
