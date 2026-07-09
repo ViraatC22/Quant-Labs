@@ -36,6 +36,11 @@ import { Input } from "@/components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import * as api from "@/lib/api";
 import {
+  accountBuyingPower,
+  validateTradeBuyingPower,
+  type BuyingPowerCheck
+} from "@/lib/tradeGuards";
+import {
   enqueue as enqueueOp,
   flushQueue,
   loadQueue,
@@ -241,6 +246,7 @@ type QuickTradeDraft = {
 type TradeDraft = NonNullable<TradeRecommendation["draft"]>;
 
 const storageKey = "quant-labs.workspace.v1";
+const paperAccountKey = "quant-labs.paper-account.v1";
 
 const tabs: Array<{ key: TabKey; label: string; icon: typeof BookMarked }> = [
   { key: "vault", label: "Vault", icon: BookMarked },
@@ -597,6 +603,36 @@ function formatCurrency(value: number) {
     currency: "USD",
     maximumFractionDigits: 2
   }).format(value);
+}
+
+function formatWhole(value: number) {
+  return new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(value);
+}
+
+function buyingPowerMessage(check: BuyingPowerCheck) {
+  if (check.reason === "invalid-account") {
+    return "Set account equity above $0 before opening a paper position.";
+  }
+  if (check.reason === "whole-contract") {
+    return "Options and futures must use whole contract quantities.";
+  }
+  if (check.reason === "missing-underlying-price") {
+    return "Add a strike price so the account guard can reserve option collateral.";
+  }
+  if (check.reason === "naked-short-call") {
+    return "Naked short calls are blocked. Use a covered call with enough underlying collateral or a long option.";
+  }
+  if (check.reason === "capital") {
+    const maxQuantity =
+      check.maxAffordableQuantity !== undefined && check.maxAffordableQuantity > 0
+        ? ` Max supported quantity is ${formatWhole(check.maxAffordableQuantity)}.`
+        : " This account cannot support even one unit of this trade.";
+    const shareDetail = check.requirement.underlyingShares
+      ? ` It reserves ${formatWhole(check.requirement.underlyingShares)} underlying shares.`
+      : "";
+    return `Blocked: ${check.requirement.label} needs ${formatCurrency(check.requirement.amount)}, but buying power is ${formatCurrency(check.buyingPower)} after ${formatCurrency(check.reserved)} reserved.${shareDetail}${maxQuantity}`;
+  }
+  return "This trade does not fit the current account guard.";
 }
 
 function quotePrice(quote: MarketQuote | undefined) {
@@ -1180,6 +1216,7 @@ export function WorkspaceApp() {
   const [vaultUrl, setVaultUrl] = useState("");
   const [quickTradeText, setQuickTradeText] = useState("");
   const [quickTradeMessage, setQuickTradeMessage] = useState("Paste one line like: AAPL long 100 x10 strategy VWAP setup ORB.");
+  const [paperAccountSize, setPaperAccountSize] = useState(10000);
   const [tradeAssetClass, setTradeAssetClass] = useState<TradeAssetClass>("equity");
   const [importStatus, setImportStatus] = useState<{
     tone: "idle" | "loading" | "success" | "error";
@@ -1219,7 +1256,19 @@ export function WorkspaceApp() {
       }
     }
 
+    function loadPaperAccountSize() {
+      try {
+        const savedAccountSize = Number(window.localStorage.getItem(paperAccountKey));
+        if (Number.isFinite(savedAccountSize) && savedAccountSize > 0 && !cancelled) {
+          setPaperAccountSize(savedAccountSize);
+        }
+      } catch {
+        // Keep the default account size when local storage is unavailable.
+      }
+    }
+
     async function load() {
+      loadPaperAccountSize();
       // Reflect any writes left queued from a previous offline session.
       setPendingWrites(loadQueue(window.localStorage).length);
       const online = await api.checkHealth();
@@ -1284,6 +1333,11 @@ export function WorkspaceApp() {
     if (!hydrated) return;
     window.localStorage.setItem(storageKey, JSON.stringify(state));
   }, [state, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    window.localStorage.setItem(paperAccountKey, String(paperAccountSize));
+  }, [paperAccountSize, hydrated]);
 
   // Global ⌘K / Ctrl+K to toggle the command palette.
   useEffect(() => {
@@ -1422,6 +1476,11 @@ export function WorkspaceApp() {
   const openPaperNotional = useMemo(
     () => openPaperTrades.reduce((sum, trade) => sum + tradeNotional(trade), 0),
     [openPaperTrades]
+  );
+
+  const paperAccount = useMemo(
+    () => accountBuyingPower(openPaperTrades, paperAccountSize),
+    [openPaperTrades, paperAccountSize]
   );
 
   const metrics = useMemo(() => {
@@ -2084,6 +2143,14 @@ export function WorkspaceApp() {
     await persistCreate("journal", entry, api.createJournal);
   }
 
+  function canOpenTrade(trade: TradeEntry) {
+    if (isTradeClosed(trade)) return true;
+    const check = validateTradeBuyingPower(trade, openPaperTrades, paperAccountSize);
+    if (check.ok) return true;
+    setQuickTradeMessage(buyingPowerMessage(check));
+    return false;
+  }
+
   async function placeLivePaperTrade() {
     const formEl = tradeFormRef.current;
     if (!formEl) return;
@@ -2140,6 +2207,8 @@ export function WorkspaceApp() {
         createdAt: new Date().toISOString()
       };
 
+      if (!canOpenTrade(trade)) return;
+
       setQuoteBySymbol((current) => ({ ...current, [lookupSymbol]: quote, [quote.symbol]: quote }));
       formEl.reset();
       setTradeAssetClass("equity");
@@ -2170,6 +2239,8 @@ export function WorkspaceApp() {
         ...draft,
         createdAt: new Date().toISOString()
       };
+
+      if (!canOpenTrade(trade)) return;
 
       formEl.reset();
       setTradeAssetClass("equity");
@@ -2209,6 +2280,8 @@ export function WorkspaceApp() {
       notes: String(form.get("notes") ?? "").trim(),
       createdAt: new Date().toISOString()
     };
+
+    if (!canOpenTrade(trade)) return;
 
     formEl.reset();
     setTradeAssetClass("equity");
@@ -2880,6 +2953,36 @@ export function WorkspaceApp() {
                   <Activity aria-hidden="true" className="text-signal" size={20} strokeWidth={2.1} />
                 </div>
                 <div className="mt-4 grid gap-3">
+                  <div className="rounded-lg border border-line bg-paper/55 p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center gap-2">
+                        <ShieldCheck aria-hidden="true" className="text-moss" size={17} strokeWidth={2.2} />
+                        <p className="text-sm font-semibold text-ink">Account Guard</p>
+                      </div>
+                      <Badge variant={paperAccount.buyingPower >= 0 ? "outline" : "destructive"}>
+                        {formatCurrency(paperAccount.buyingPower)}
+                      </Badge>
+                    </div>
+                    <div className="mt-3 grid gap-3">
+                      <Field label="Account equity">
+                        <input
+                          className={textInputClass()}
+                          min="0"
+                          onChange={(event) => {
+                            const next = Number(event.target.value);
+                            setPaperAccountSize(Number.isFinite(next) ? Math.max(0, next) : 0);
+                          }}
+                          step="100"
+                          type="number"
+                          value={paperAccountSize}
+                        />
+                      </Field>
+                      <div className="grid gap-2 rounded-md border border-line bg-card/70 px-3 py-2 text-sm">
+                        <SnapshotRow label="Reserved" value={formatCurrency(paperAccount.reserved)} />
+                        <SnapshotRow label="Buying power" value={formatCurrency(paperAccount.buyingPower)} />
+                      </div>
+                    </div>
+                  </div>
                   <div className="rounded-lg border border-signal/20 bg-signal/5 p-3">
                     <Field label="Quick trade">
                       <textarea
