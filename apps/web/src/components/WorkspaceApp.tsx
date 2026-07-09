@@ -11,6 +11,7 @@ import {
   GitBranch,
   Link2,
   LineChart,
+  Pencil,
   Plus,
   Search,
   ShieldCheck,
@@ -260,6 +261,8 @@ const syncHandlers: SyncHandlers = {
   createJournal: api.createJournal,
   createDocument: api.createDocument,
   updateTrade: api.updateTrade,
+  updateJournal: api.updateJournal,
+  updateDocument: api.updateDocument,
   remove: (collection, id) =>
     collection === "trades"
       ? api.deleteTrade(id)
@@ -475,6 +478,61 @@ const technicalRules: Record<string, Array<readonly [RegExp, string, string]>> =
     [/\bnew york\b|\bny session\b/i, "New York", "new-york-session"]
   ]
 };
+
+function InlineEditForm({
+  initialTitle,
+  initialBody,
+  initialTags,
+  onSave,
+  onCancel
+}: {
+  initialTitle: string;
+  initialBody: string;
+  initialTags: string[];
+  onSave: (values: { title: string; body: string; tags: string[] }) => void;
+  onCancel: () => void;
+}) {
+  const [title, setTitle] = useState(initialTitle);
+  const [body, setBody] = useState(initialBody);
+  const [tags, setTags] = useState(initialTags.join(", "));
+
+  return (
+    <div className="mt-3 space-y-2 rounded-md border border-signal/30 bg-signal/5 p-3">
+      <input
+        className={textInputClass()}
+        value={title}
+        onChange={(event) => setTitle(event.target.value)}
+        placeholder="Title"
+        aria-label="Title"
+      />
+      <textarea
+        className={textareaClass()}
+        value={body}
+        onChange={(event) => setBody(event.target.value)}
+        placeholder="Body"
+        aria-label="Body"
+      />
+      <input
+        className={textInputClass()}
+        value={tags}
+        onChange={(event) => setTags(event.target.value)}
+        placeholder="tags, comma separated"
+        aria-label="Tags"
+      />
+      <div className="flex gap-2">
+        <Button
+          type="button"
+          onClick={() => onSave({ title: title.trim(), body: body.trim(), tags: splitTags(tags) })}
+        >
+          Save
+        </Button>
+        <Button type="button" variant="outline" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 function newId() {
   // Real UUIDs so offline-created records can be replayed idempotently against
@@ -1099,6 +1157,7 @@ export function WorkspaceApp() {
   const [syncNotice, setSyncNotice] = useState<string | null>(null);
   const [pendingWrites, setPendingWrites] = useState(0);
   const [commandOpen, setCommandOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [aiRouterStatus, setAiRouterStatus] = useState<AiRouterStatus | null>(null);
   const [tradeRecommendations, setTradeRecommendations] = useState<TradeRecommendation[]>([]);
   const [optimalStrategy, setOptimalStrategy] = useState<StrategyEvaluation | null>(null);
@@ -1863,6 +1922,49 @@ export function WorkspaceApp() {
     setPendingWrites(next.length);
   }
 
+  async function persistUpdate(
+    collection: "journal" | "vault",
+    id: string,
+    patch: Partial<JournalEntry> & Partial<VaultItem>
+  ) {
+    // Optimistically apply the edit.
+    setState(
+      (current) =>
+        ({
+          ...current,
+          [collection]: (current[collection] as Array<{ id: string }>).map((item) =>
+            item.id === id ? { ...item, ...patch } : item
+          )
+        }) as WorkspaceState
+    );
+
+    const op = newOp({ type: "update", collection, id, patch: patch as never });
+    const update = collection === "journal" ? api.updateJournal : api.updateDocument;
+    if (apiOnline) {
+      try {
+        const stored = await update(id, patch as never);
+        setState(
+          (current) =>
+            ({
+              ...current,
+              [collection]: (current[collection] as Array<{ id: string }>).map((item) =>
+                item.id === id ? stored : item
+              )
+            }) as WorkspaceState
+        );
+      } catch (error) {
+        if (error instanceof api.ApiError) {
+          setSyncNotice(`Edit not saved to the server: ${error.message}`);
+        } else {
+          queueWrite(op);
+          setApiOnline(false);
+        }
+      }
+    } else {
+      queueWrite(op);
+    }
+  }
+
   async function persistCreate<T extends { id: string }>(
     collection: keyof WorkspaceState,
     local: T,
@@ -2509,15 +2611,37 @@ export function WorkspaceApp() {
                               </div>
                             )}
                           </div>
-                          <button
-                            className="rounded-md p-2 text-ink/45 transition hover:bg-paper hover:text-loss"
-                            onClick={() => removeItem("vault", item.id)}
-                            title="Delete"
-                            type="button"
-                          >
-                            <Trash2 aria-hidden="true" size={17} />
-                          </button>
+                          <div className="flex shrink-0 items-start gap-1">
+                            <button
+                              className="rounded-md p-2 text-ink/45 transition hover:bg-paper hover:text-signal"
+                              onClick={() => setEditingId(editingId === item.id ? null : item.id)}
+                              title="Edit"
+                              type="button"
+                            >
+                              <Pencil aria-hidden="true" size={16} />
+                            </button>
+                            <button
+                              className="rounded-md p-2 text-ink/45 transition hover:bg-paper hover:text-loss"
+                              onClick={() => removeItem("vault", item.id)}
+                              title="Delete"
+                              type="button"
+                            >
+                              <Trash2 aria-hidden="true" size={17} />
+                            </button>
+                          </div>
                         </div>
+                        {editingId === item.id && (
+                          <InlineEditForm
+                            initialTitle={item.title}
+                            initialBody={item.body}
+                            initialTags={item.tags ?? []}
+                            onCancel={() => setEditingId(null)}
+                            onSave={(values) => {
+                              void persistUpdate("vault", item.id, values);
+                              setEditingId(null);
+                            }}
+                          />
+                        )}
                       </article>
                     );
                   })}
@@ -2613,15 +2737,37 @@ export function WorkspaceApp() {
                           />
                           <div className="mt-3 flex flex-wrap gap-2">{entry.tags.map(tagChip)}</div>
                         </div>
-                        <button
-                          className="rounded-md p-2 text-ink/45 transition hover:bg-paper hover:text-loss"
-                          onClick={() => removeItem("journal", entry.id)}
-                          title="Delete"
-                          type="button"
-                        >
-                          <Trash2 aria-hidden="true" size={17} />
-                        </button>
+                        <div className="flex shrink-0 items-start gap-1">
+                          <button
+                            className="rounded-md p-2 text-ink/45 transition hover:bg-paper hover:text-signal"
+                            onClick={() => setEditingId(editingId === entry.id ? null : entry.id)}
+                            title="Edit"
+                            type="button"
+                          >
+                            <Pencil aria-hidden="true" size={16} />
+                          </button>
+                          <button
+                            className="rounded-md p-2 text-ink/45 transition hover:bg-paper hover:text-loss"
+                            onClick={() => removeItem("journal", entry.id)}
+                            title="Delete"
+                            type="button"
+                          >
+                            <Trash2 aria-hidden="true" size={17} />
+                          </button>
+                        </div>
                       </div>
+                      {editingId === entry.id && (
+                        <InlineEditForm
+                          initialTitle={entry.title}
+                          initialBody={entry.body}
+                          initialTags={entry.tags ?? []}
+                          onCancel={() => setEditingId(null)}
+                          onSave={(values) => {
+                            void persistUpdate("journal", entry.id, values);
+                            setEditingId(null);
+                          }}
+                        />
+                      )}
                     </article>
                   ))}
                   {!state.journal.length && (

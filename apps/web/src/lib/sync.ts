@@ -18,6 +18,8 @@ export type SyncOp =
   | { opId: string; type: "create"; collection: "journal"; record: JournalEntry }
   | { opId: string; type: "create"; collection: "vault"; record: VaultItem }
   | { opId: string; type: "update"; collection: "trades"; id: string; patch: Partial<TradeEntry> }
+  | { opId: string; type: "update"; collection: "journal"; id: string; patch: Partial<JournalEntry> }
+  | { opId: string; type: "update"; collection: "vault"; id: string; patch: Partial<VaultItem> }
   | { opId: string; type: "delete"; collection: SyncCollection; id: string };
 
 export type SyncHandlers = {
@@ -25,6 +27,8 @@ export type SyncHandlers = {
   createJournal: (record: JournalEntry) => Promise<JournalEntry>;
   createDocument: (record: VaultItem) => Promise<VaultItem>;
   updateTrade: (id: string, patch: Partial<TradeEntry>) => Promise<TradeEntry>;
+  updateJournal: (id: string, patch: Partial<JournalEntry>) => Promise<JournalEntry>;
+  updateDocument: (id: string, patch: Partial<VaultItem>) => Promise<VaultItem>;
   remove: (collection: SyncCollection, id: string) => Promise<void>;
 };
 
@@ -91,7 +95,9 @@ async function dispatch(op: SyncOp, handlers: SyncHandlers): Promise<void> {
     return;
   }
   if (op.type === "update") {
-    await handlers.updateTrade(op.id, op.patch);
+    if (op.collection === "trades") await handlers.updateTrade(op.id, op.patch);
+    else if (op.collection === "journal") await handlers.updateJournal(op.id, op.patch);
+    else await handlers.updateDocument(op.id, op.patch);
     return;
   }
   await handlers.remove(op.collection, op.id);

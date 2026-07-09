@@ -36,6 +36,25 @@ function noopHandlers(overrides: Partial<SyncHandlers> = {}): SyncHandlers {
     createJournal: async (r) => r,
     createDocument: async (r) => r,
     updateTrade: async (_id, _p) => sampleTrade("x"),
+    updateJournal: async (_id, _p) => ({
+      id: "x",
+      date: "2026-07-09",
+      title: "",
+      emotion: "focused",
+      routineDone: false,
+      body: "",
+      tags: [],
+      createdAt: ""
+    }),
+    updateDocument: async (_id, _p) => ({
+      id: "x",
+      title: "",
+      kind: "note",
+      source: "",
+      body: "",
+      tags: [],
+      createdAt: ""
+    }),
     remove: async () => undefined,
     ...overrides
   };
