@@ -24,6 +24,7 @@ import {
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { MetricTile } from "@/components/MetricTile";
+import { PerformancePanel } from "@/components/insights/PerformancePanel";
 import { DashboardHeader } from "@/components/shell/DashboardHeader";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -3143,6 +3144,9 @@ export function WorkspaceApp() {
                   {tradingInsights.map((insight) => (
                     <InsightCard insight={insight} key={insight.title} />
                   ))}
+                </div>
+                <div className="mt-4">
+                  <PerformancePanel trades={state.trades} />
                 </div>
                 <RoutinePlaybookCard routine={recommendedRoutine} />
                 {optimalStrategy && (
