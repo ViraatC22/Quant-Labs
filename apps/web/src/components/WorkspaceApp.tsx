@@ -2394,7 +2394,8 @@ export function WorkspaceApp() {
           onClose={() => setCsvImportOpen(false)}
         />
       )}
-      <Tabs className="flex items-center gap-3 border-b bg-card/78 px-4 py-3 backdrop-blur">
+      <Tabs className="border-b bg-card/78 py-3 backdrop-blur">
+        <div className="mx-auto flex max-w-7xl items-center gap-3 px-4">
         <TabsList className="max-w-full overflow-x-auto">
           {tabs.map((tab) => {
             const Icon = tab.icon;
@@ -2425,6 +2426,7 @@ export function WorkspaceApp() {
           <span className="hidden sm:inline">Search</span>
           <kbd className="hidden rounded bg-ink/5 px-1.5 text-[11px] sm:inline">⌘K</kbd>
         </button>
+        </div>
       </Tabs>
 
       <div
