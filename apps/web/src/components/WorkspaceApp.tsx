@@ -25,9 +25,11 @@ import {
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { MetricTile } from "@/components/MetricTile";
+import { BrokerImportDialog } from "@/components/import/BrokerImportDialog";
 import { PerformancePanel } from "@/components/insights/PerformancePanel";
 import { CommandPalette } from "@/components/search/CommandPalette";
 import { DashboardHeader } from "@/components/shell/DashboardHeader";
+import type { ParsedTrade } from "@/lib/csvImport";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -1158,6 +1160,7 @@ export function WorkspaceApp() {
   const [pendingWrites, setPendingWrites] = useState(0);
   const [commandOpen, setCommandOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [csvImportOpen, setCsvImportOpen] = useState(false);
   const [aiRouterStatus, setAiRouterStatus] = useState<AiRouterStatus | null>(null);
   const [tradeRecommendations, setTradeRecommendations] = useState<TradeRecommendation[]>([]);
   const [optimalStrategy, setOptimalStrategy] = useState<StrategyEvaluation | null>(null);
@@ -1965,6 +1968,32 @@ export function WorkspaceApp() {
     }
   }
 
+  async function importParsedTrades(parsed: ParsedTrade[]) {
+    for (const row of parsed) {
+      const trade: TradeEntry = {
+        id: newId(),
+        symbol: row.symbol,
+        assetClass: "equity",
+        side: row.side,
+        entryDate: row.entryDate,
+        entryPrice: row.entryPrice,
+        exitPrice: row.exitPrice,
+        quantity: row.quantity,
+        fees: row.fees,
+        strategy: row.strategy,
+        setup: row.setup,
+        emotion: "focused",
+        notes: "Imported from CSV",
+        createdAt: new Date().toISOString()
+      };
+      await persistCreate("trades", trade, api.createTrade);
+    }
+    setImportStatus({
+      tone: "success",
+      message: `Imported ${parsed.length} trade${parsed.length === 1 ? "" : "s"} from CSV.`
+    });
+  }
+
   async function persistCreate<T extends { id: string }>(
     collection: keyof WorkspaceState,
     local: T,
@@ -2332,6 +2361,18 @@ export function WorkspaceApp() {
           tabs={tabs}
           onSelectTab={(tab) => setActiveTab(tab as TabKey)}
           onClose={() => setCommandOpen(false)}
+        />
+      )}
+      {csvImportOpen && (
+        <BrokerImportDialog
+          existing={state.trades.map((trade) => ({
+            symbol: trade.symbol,
+            entryDate: trade.entryDate,
+            entryPrice: trade.entryPrice,
+            quantity: trade.quantity
+          }))}
+          onImport={(rows) => void importParsedTrades(rows)}
+          onClose={() => setCsvImportOpen(false)}
         />
       )}
       <Tabs className="flex items-center gap-3 border-b bg-card/78 px-4 py-3 backdrop-blur">
@@ -3177,12 +3218,18 @@ export function WorkspaceApp() {
                 </section>
 
                 <section className="overflow-hidden rounded-lg border border-line bg-card/86 shadow-panel">
-                <div className="border-b border-line px-4 py-3">
-                  <h2 className="text-base font-semibold text-ink">Trades</h2>
-                  <p className="mt-1 text-sm text-ink/58">
-                    {viewState.trades.filter((trade) => !isTradeClosed(trade)).length} open /{" "}
-                    {viewState.trades.filter(isTradeClosed).length} closed
-                  </p>
+                <div className="flex items-center justify-between border-b border-line px-4 py-3">
+                  <div>
+                    <h2 className="text-base font-semibold text-ink">Trades</h2>
+                    <p className="mt-1 text-sm text-ink/58">
+                      {viewState.trades.filter((trade) => !isTradeClosed(trade)).length} open /{" "}
+                      {viewState.trades.filter(isTradeClosed).length} closed
+                    </p>
+                  </div>
+                  <Button type="button" variant="outline" onClick={() => setCsvImportOpen(true)}>
+                    <Upload aria-hidden="true" size={16} strokeWidth={2.2} />
+                    Import CSV
+                  </Button>
                 </div>
                 <div className="divide-y divide-line">
                   {viewState.trades.map((trade) => (
