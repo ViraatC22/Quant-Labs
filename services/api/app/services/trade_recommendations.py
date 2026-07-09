@@ -51,6 +51,23 @@ def _recommend_from_source(
     technical_tags = _technical_tags(source)
     strategy_name = _strategy_name(source.title, strategy_info)
     setup = _string(strategy_info.get("setup") if strategy_info else None)
+
+    # A reference article is not a strategy. If a non-strategy document has no
+    # real extracted setup and no related trades, don't dress its title up as
+    # trade guidance like "Favor <article title>" — it belongs in research.
+    # A document the user explicitly saved as a strategy is always eligible.
+    has_related = bool(
+        _related_trades(trades, strategy_name=strategy_name, setup=setup, tags=technical_tags)
+    )
+    is_bare_article = (
+        source.document_type not in {"strategy", "broker_import"}
+        and not setup
+        and strategy_name.strip().lower() == source.title.strip().lower()
+        and not has_related
+    )
+    if is_bare_article:
+        return None
+
     related_trades = _related_trades(
         trades,
         strategy_name=strategy_name,

@@ -625,6 +625,14 @@ function tradeNotional(trade: TradeEntry) {
   return trade.entryPrice * trade.quantity * tradeContractMultiplier(trade);
 }
 
+// Honest evidence label instead of a fabricated confidence %. When the
+// recommendation is backed by real matching trades, surface that sample;
+// otherwise say plainly that it is a rule-based extraction.
+function recommendationEvidenceLabel(recommendation: TradeRecommendation): string {
+  const tradeEvidence = recommendation.evidence?.find((item) => /matching trades/i.test(item));
+  return tradeEvidence ?? "Rule-based · no matching trades yet";
+}
+
 function targetPercentForTags(tags: string[]) {
   const text = tags.join(" ");
   if (text.includes("risk-parity")) return 0.006;
@@ -3038,8 +3046,8 @@ export function WorkspaceApp() {
                               {signal.strategyName} / {signal.setup ?? "setup pending"}
                             </p>
                           </div>
-                          <span className="text-xs font-semibold text-ink/48">
-                            {Math.round(signal.confidence * 100)}%
+                          <span className="rounded-md bg-ink/5 px-2 py-0.5 text-[11px] font-medium text-ink/48">
+                            rule-based
                           </span>
                         </div>
                         <ReadMoreText
@@ -3071,8 +3079,14 @@ export function WorkspaceApp() {
                     <ShieldCheck aria-hidden="true" className="text-moss" size={20} strokeWidth={2.1} />
                   </div>
                   <div className="mt-4 space-y-3 text-sm">
-                    <SnapshotRow label="Validation" value={recommendedRoutine.validationState} />
-                    <SnapshotRow label="Confidence" value={`${Math.round(recommendedRoutine.confidence * 100)}%`} />
+                    <SnapshotRow
+                      label="Evidence"
+                      value={
+                        recommendedRoutine.validationState === "live"
+                          ? "trade-validated"
+                          : "rule-based"
+                      }
+                    />
                     <SnapshotRow label="Sources" value={String(recommendedRoutine.sourceCount)} />
                     <SnapshotRow
                       label="Closed trades"
@@ -3591,8 +3605,7 @@ function StrategyInfoSummary({ strategyInfo }: { strategyInfo: GeneratedStrategy
   const detailRows = [
     ["Setup", strategyInfo.setup],
     ["Timeframe", strategyInfo.timeframe],
-    ["Market", strategyInfo.market],
-    ["Confidence", strategyInfo.confidence !== undefined ? `${Math.round(strategyInfo.confidence * 100)}%` : null]
+    ["Market", strategyInfo.market]
   ].filter((row): row is [string, string] => Boolean(row[1]));
   const compatibilityTags = marketCompatibilityTags([
     strategyInfo.market,
@@ -3765,12 +3778,15 @@ function RoutinePlaybookCard({
             {routine.strategyName}
           </h3>
           <p className="mt-1 text-sm leading-6 text-ink/58">
-            {routine.setupFocus} / {routine.sourceCount} source{routine.sourceCount === 1 ? "" : "s"} /{" "}
-            {Math.round(routine.confidence * 100)}% confidence
+            {routine.setupFocus} / {routine.sourceCount} source{routine.sourceCount === 1 ? "" : "s"}
           </p>
         </div>
         <Badge variant={routine.validationState === "live" ? "secondary" : "default"}>
-          {routine.validationState}
+          {routine.validationState === "live"
+            ? "trade-validated"
+            : routine.validationState === "draft"
+              ? "draft"
+              : "rule-based"}
         </Badge>
       </div>
       {routine.technicalTags.length > 0 && (
@@ -3833,12 +3849,12 @@ function StrategyEvaluationCard({
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.12em] text-ink/48">{title}</p>
           <h3 className="mt-2 text-sm font-semibold text-ink">{evaluation.title}</h3>
-          <p className="mt-1 text-xs font-medium text-ink/52">
-            {evaluation.decision} / {Math.round(evaluation.score * 100)}% score
+          <p className="mt-1 text-xs font-medium capitalize text-ink/52">
+            {evaluation.decision.replace(/-/g, " ")}
           </p>
         </div>
         <Badge variant={evaluation.decision === "beneficial" ? "default" : "warning"}>
-          AI
+          assessment
         </Badge>
       </div>
       <ReadMoreText
@@ -3916,10 +3932,9 @@ function TradeRecommendationCard({
         <div>
           <h3 className="text-sm font-semibold text-ink">{recommendation.title}</h3>
           <p className="mt-1 text-xs font-medium text-ink/52">
-            {Math.round(recommendation.confidence * 100)}% confidence
+            {recommendationEvidenceLabel(recommendation)}
           </p>
         </div>
-        <Badge variant="warning">AI</Badge>
       </div>
       <ReadMoreText
         className="mt-3 text-sm font-medium leading-6 text-ink"
