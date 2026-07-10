@@ -67,22 +67,22 @@ function StrategyBars({ trades }: { trades: TradeEntry[] }) {
         const pct = (Math.abs(row.pnl) / maxAbs) * 100;
         const up = row.pnl >= 0;
         return (
-          <div key={row.name} className="grid grid-cols-[1fr_auto] items-center gap-3 text-sm">
-            <div>
-              <div className="flex items-center justify-between gap-2">
-                <span className="truncate text-ink">{row.name}</span>
-                <span className={up ? "text-moss" : "text-loss"}>{money(row.pnl)}</span>
-              </div>
-              <div className="mt-1 h-1.5 w-full rounded-full bg-ink/8">
+          <div key={row.name} className="text-sm">
+            <div className="flex items-center justify-between gap-2">
+              <span className="min-w-0 truncate text-ink">{row.name}</span>
+              <span className={`shrink-0 ${up ? "text-moss" : "text-loss"}`}>{money(row.pnl)}</span>
+            </div>
+            <div className="mt-1.5 flex items-center gap-2">
+              <div className="h-1.5 flex-1 rounded-full bg-ink/8">
                 <div
                   className={`h-1.5 rounded-full ${up ? "bg-moss" : "bg-loss"}`}
                   style={{ width: `${pct}%` }}
                 />
               </div>
+              <span className="shrink-0 whitespace-nowrap text-xs text-ink/45">
+                {row.count} · {Math.round(row.winRate * 100)}%
+              </span>
             </div>
-            <span className="whitespace-nowrap text-xs text-ink/45">
-              {row.count} · {Math.round(row.winRate * 100)}%
-            </span>
           </div>
         );
       })}

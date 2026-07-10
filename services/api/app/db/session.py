@@ -10,6 +10,8 @@ from app.core.config import settings
 # Each entry: table -> {column: "<sqlite column definition>"}.
 _SQLITE_ADDED_COLUMNS: dict[str, dict[str, str]] = {
     "trades": {"contract_multiplier": "NUMERIC NOT NULL DEFAULT 1"},
+    # label_embedding lands on an already-created dev DB; JSON-backed on SQLite.
+    "kg_nodes": {"label_embedding": "JSON"},
 }
 
 _is_sqlite = settings.database_url.startswith("sqlite")

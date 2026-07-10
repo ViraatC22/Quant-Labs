@@ -30,6 +30,24 @@ that provider.
 | `GEMINI_API_KEY` / `GEMINI_MODEL` | Google Gemini Interactions API provider slot. |
 | `CEREBRAS_API_KEY` / `CEREBRAS_MODEL` | Cerebras OpenAI-compatible chat-completions provider slot. |
 
+## Memory & Retrieval
+
+Embeddings power semantic search, entity resolution, claim dedupe, and conflict
+detection. The default `local` provider is deterministic and needs no network,
+so the whole research stack runs offline; `ollama` and `openai` are opt-in for
+true neural embeddings.
+
+| Variable | Purpose |
+| --- | --- |
+| `EMBEDDING_PROVIDER` | `local` (default, dependency-free), `ollama`, or `openai`. |
+| `EMBEDDING_MODEL` | Model name for the chosen provider (e.g. `nomic-embed-text`). |
+| `EMBEDDING_DIM` | Embedding dimension. Must match the provider **and** the `vector()` column in the migrations (default `768`). Changing it needs a follow-up migration. |
+| `OLLAMA_BASE_URL` | Ollama server base URL when `EMBEDDING_PROVIDER=ollama`. |
+| `ENTITY_MATCH_THRESHOLD` | Cosine ≥ this → two node labels are the same entity (default `0.88`). |
+| `ENTITY_REVIEW_THRESHOLD` | Cosine in `[review, match)` → flagged possible duplicate (default `0.80`). |
+| `CONFLICT_SIM_THRESHOLD` | Claim-embedding cosine ≥ this with opposing polarity → conflict (default `0.85`). |
+| `RESEARCH_MAX_SUBQUERIES` | Budget cap for multi-step research (default `4`). |
+
 ## Persistence And Infrastructure
 
 | Variable | Purpose |

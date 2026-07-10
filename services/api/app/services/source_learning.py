@@ -7,8 +7,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models.domain import KgEdge, KgNode, MemoryChunk, SourceDocument
-
-MAX_CHUNK_CHARS = 1600
+from app.services import claim_extraction, claims_store, embeddings, entity_resolution
+from app.services.chunking import chunk_text as _boundary_chunks
 
 
 def learn_from_source_document(
@@ -196,12 +196,34 @@ def learn_from_source_document(
             )
         )
 
+    # Claims: atomic subject–predicate–object assertions with evidence, plus
+    # conflict detection against everything already known about the subject.
+    claim_subject = strategy_node or source_node
+    extracted_claims = claim_extraction.extract_claims(
+        subject_label=claim_subject.label,
+        strategy_info=strategy_info,
+        text=text,
+    )
+    persisted_claims = claims_store.persist_claims(
+        db,
+        user_id=user_id,
+        subject_node=claim_subject,
+        document_id=document.id,
+        extracted=extracted_claims,
+        chunk_ids=chunk_ids,
+    )
+    new_conflicts = claims_store.detect_conflicts_for_subject(
+        db, user_id=user_id, subject_node_id=claim_subject.id
+    )
+
     summary = {
         "chunk_count": len(chunk_ids),
         "node_count": len({node.id for node in learned_nodes}),
         "edge_count": len({edge.id for edge in learned_edges}),
         "strategy": strategy_node.label if strategy_node else None,
         "technical_count": len(_technical_nodes(technical_profile)),
+        "claim_count": len({claim.id for claim in persisted_claims}),
+        "new_conflicts": new_conflicts,
         "map_labels": sorted({node.label for node in learned_nodes})[:24],
         "status": "learned",
     }
@@ -244,6 +266,45 @@ def delete_source_learning(db: Session, *, document_id: UUID, user_id: UUID) -> 
         for chunk in db.scalars(select(MemoryChunk).where(MemoryChunk.id.in_(chunk_ids))):
             db.delete(chunk)
 
+    _delete_claims_for_document(db, document_id=document_id, user_id=user_id)
+
+
+def _delete_claims_for_document(db: Session, *, document_id: UUID, user_id: UUID) -> None:
+    """Drop this document's claim evidence; remove any claim left with none, and
+    conflicts referencing removed claims."""
+    from app.models.domain import Claim, ClaimConflict, ClaimEvidence
+
+    affected_claim_ids = set(
+        db.scalars(
+            select(ClaimEvidence.claim_id).where(
+                ClaimEvidence.source_document_id == document_id
+            )
+        )
+    )
+    for evidence in db.scalars(
+        select(ClaimEvidence).where(ClaimEvidence.source_document_id == document_id)
+    ):
+        db.delete(evidence)
+    db.flush()
+
+    for claim_id in affected_claim_ids:
+        remaining = db.scalar(
+            select(ClaimEvidence.id).where(ClaimEvidence.claim_id == claim_id)
+        )
+        if remaining is not None:
+            continue
+        for conflict in db.scalars(
+            select(ClaimConflict).where(
+                ClaimConflict.user_id == user_id,
+                (ClaimConflict.claim_a_id == claim_id) | (ClaimConflict.claim_b_id == claim_id),
+            )
+        ):
+            db.delete(conflict)
+        claim = db.get(Claim, claim_id)
+        if claim is not None:
+            db.delete(claim)
+    db.flush()
+
 
 def _create_memory_chunks(
     db: Session,
@@ -254,26 +315,30 @@ def _create_memory_chunks(
     tags: list[str],
     strategy_info: dict | None,
 ) -> list[UUID]:
-    chunks = _chunk_text(text) or [document.title]
+    chunks = _boundary_chunks(text)
+    if not chunks:
+        chunks = _fallback_chunk(document.title)
     chunk_ids: list[UUID] = []
-    for index, chunk_text in enumerate(chunks):
-        chunk = MemoryChunk(
+    for index, chunk in enumerate(chunks):
+        embedding = embeddings.embed_text(chunk.text)
+        memory_chunk = MemoryChunk(
             user_id=user_id,
             source_type="source_document",
             source_id=document.id,
             chunk_index=index,
-            text=chunk_text,
-            embedding=None,
+            text=chunk.text,
+            embedding=embedding,
             chunk_metadata={
                 "source_title": document.title,
                 "tags": tags,
                 "strategy": _strategy_name(document.title, strategy_info),
+                "embedding_provider": embeddings.settings.embedding_provider if embedding else None,
             },
-            token_count=len(chunk_text.split()),
+            token_count=chunk.token_count,
         )
-        db.add(chunk)
+        db.add(memory_chunk)
         db.flush()
-        chunk_ids.append(chunk.id)
+        chunk_ids.append(memory_chunk.id)
     return chunk_ids
 
 
@@ -297,15 +362,35 @@ def _get_or_create_node(
         query = query.where(KgNode.source_table == source_table, KgNode.source_id == source_id)
     node = db.scalar(query)
     if node:
-        # Merge, don't overwrite: a shared node (tag/setup/technical/rule keyed
-        # by label) can be supported by several sources. Accumulate the set of
-        # contributing sources and keep the strongest confidence so re-importing
-        # one document never erases what the others established.
-        merged = {**(node.properties or {}), **properties}
-        merged["source_titles"] = _merge_source_titles(node.properties, properties)
-        node.properties = merged
-        node.confidence = _max_confidence(node.confidence, confidence)
-        return node
+        return _merge_into_node(node, properties, confidence)
+
+    # Concept nodes (no source_id) go through embedding-similarity resolution so
+    # a synonym of an existing entity reuses its node instead of forking a
+    # duplicate. Source nodes are unique per document and skip this.
+    is_concept = not (source_table and source_id)
+    label_embedding: list[float] | None = None
+    if is_concept:
+        label_embedding = entity_resolution.embed_label(label, node_type)
+        resolution = entity_resolution.resolve_entity(
+            db,
+            user_id=user_id,
+            node_type=node_type,
+            label=label,
+            label_embedding=label_embedding,
+        )
+        if resolution.node is not None:
+            merged = _merge_into_node(resolution.node, properties, confidence)
+            if resolution.node.label_embedding is None and label_embedding is not None:
+                resolution.node.label_embedding = label_embedding
+            if resolution.is_possible_duplicate:
+                aka = set(merged.properties.get("aka", []))
+                aka.add(label)
+                merged.properties = {
+                    **merged.properties,
+                    "aka": sorted(aka),
+                    "needs_dedupe_review": True,
+                }
+            return merged
 
     node = KgNode(
         user_id=user_id,
@@ -315,10 +400,23 @@ def _get_or_create_node(
         label=label[:240],
         properties={**properties, "source_titles": _merge_source_titles(None, properties)},
         confidence=confidence,
+        label_embedding=label_embedding,
         created_by="source_learning",
     )
     db.add(node)
     db.flush()
+    return node
+
+
+def _merge_into_node(node: KgNode, properties: dict, confidence: Decimal | None) -> KgNode:
+    # Merge, don't overwrite: a shared node (tag/setup/technical/rule keyed by
+    # label or resolved by similarity) can be supported by several sources.
+    # Accumulate the set of contributing sources and keep the strongest
+    # confidence so re-importing one document never erases what others established.
+    merged = {**(node.properties or {}), **properties}
+    merged["source_titles"] = _merge_source_titles(node.properties, properties)
+    node.properties = merged
+    node.confidence = _max_confidence(node.confidence, confidence)
     return node
 
 
@@ -384,15 +482,12 @@ def _max_confidence(current: Decimal | None, incoming: Decimal | None) -> Decima
     return max(values) if values else None
 
 
-def _chunk_text(text: str) -> list[str]:
-    compact = " ".join(text.split())
-    if not compact:
-        return []
-    return [
-        compact[index : index + MAX_CHUNK_CHARS].strip()
-        for index in range(0, len(compact), MAX_CHUNK_CHARS)
-        if compact[index : index + MAX_CHUNK_CHARS].strip()
-    ]
+def _fallback_chunk(title: str):
+    """A document with no body still gets one chunk (its title) so it is
+    retrievable and can anchor graph provenance."""
+    from app.services.chunking import Chunk, estimate_tokens
+
+    return [Chunk(text=title, token_count=estimate_tokens(title))]
 
 
 def _metadata_tags(metadata: dict) -> list[str]:

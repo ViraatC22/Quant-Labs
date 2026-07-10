@@ -82,6 +82,16 @@ Current app functionality:
   read-more sections for long generated content, compact source details, and
   short entry/exit/risk evidence.
 - Import/export the local workspace as JSON.
+- Ask questions of your trading memory on the `/research` page and get answers
+  assembled only from your saved sources and trades, with a citation on every
+  claim, a trust score for how much of the answer is evidence-backed, and an
+  explicit refusal when there is no evidence rather than a fabricated answer.
+- Search sources semantically (embedding + keyword hybrid), collapse the same
+  entity written different ways ("FVG" and "fair value gap") into one graph
+  node, and surface conflicts side by side when two sources disagree about the
+  same claim.
+- Expose the same memory (search, ask, entities, conflicts) to other assistants
+  through a read-only MCP server (`services/mcp`).
 
 When the API is available, records persist to the local API database. If the API
 is offline, writes go to a durable local queue and are optimistically shown;
@@ -90,9 +100,21 @@ offline work is lost (records use client UUIDs, so replay is idempotent). P&L is
 computed server-side including the contract multiplier and rendered from the
 server, and quotes are cached server-side with a stale-value fallback.
 
-Saved sources are chunked and linked into a keyword/graph knowledge map today.
-Embedding-based semantic search and GraphRAG chat are roadmap items (see
-[`docs/architecture.md`](docs/architecture.md)), not yet shipped.
+Saved sources are chunked (boundary-aware, overlapping) and embedded, then
+linked into a graph of strategies, setups, indicators, rules, and tags plus a
+first-class **claims** layer (atomic subject–predicate–object assertions with
+per-source evidence). Two facts about the same thing under different names are
+resolved to one graph node by embedding similarity, and two sources that
+disagree open a **conflict** you can review. A grounded research endpoint
+(`POST /api/v1/research/ask`, and the `/research` page) answers questions from
+that memory only — every claim is cited and a **trust score** shows the share
+of the answer backed by real evidence; it refuses rather than fabricate when it
+has none. Semantic search over chunks ships too (`GET /api/v1/research/search`).
+A read-only MCP server (`services/mcp`) exposes the same tools to other
+assistants. Embeddings default to a dependency-free local provider so all of
+this runs offline; set `EMBEDDING_PROVIDER=ollama` for full neural embeddings
+(see [`docs/architecture.md`](docs/architecture.md) and
+[`docs/lattice-merge-plan.md`](docs/lattice-merge-plan.md)).
 
 The MVP is research, journaling, and paper-only experimentation. Live
 autonomous trading is intentionally out of scope.

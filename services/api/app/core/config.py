@@ -53,6 +53,24 @@ class Settings:
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
     cerebras_api_key: str = os.getenv("CEREBRAS_API_KEY", "")
     cerebras_model: str = os.getenv("CEREBRAS_MODEL", "gpt-oss-120b")
+    openai_api_key: str = os.getenv("OPENAI_API_KEY", "")
+    # --- Memory / retrieval (Lattice merge) -------------------------------
+    # Embeddings power semantic chunk search, entity resolution, and claim
+    # dedupe. The default `local` provider is deterministic and needs no
+    # network (hermetic tests, offline dev); `ollama`/`openai` are opt-in for
+    # true semantics. EMBEDDING_DIM must match whatever provider is selected
+    # AND the vector() column dimension in the migrations.
+    embedding_provider: str = os.getenv("EMBEDDING_PROVIDER", "local").lower()
+    embedding_model: str = os.getenv("EMBEDDING_MODEL", "nomic-embed-text")
+    embedding_dim: int = int(os.getenv("EMBEDDING_DIM", "768"))
+    ollama_base_url: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    # Cosine thresholds. Above entity_match_threshold two node labels are the
+    # same entity; the band below down to entity_review_threshold is flagged as
+    # a possible duplicate rather than silently merged.
+    entity_match_threshold: float = float(os.getenv("ENTITY_MATCH_THRESHOLD", "0.88"))
+    entity_review_threshold: float = float(os.getenv("ENTITY_REVIEW_THRESHOLD", "0.80"))
+    conflict_sim_threshold: float = float(os.getenv("CONFLICT_SIM_THRESHOLD", "0.85"))
+    research_max_subqueries: int = int(os.getenv("RESEARCH_MAX_SUBQUERIES", "4"))
     cors_origins: list[str] = field(
         default_factory=lambda: _csv_env(
             "CORS_ORIGINS",
