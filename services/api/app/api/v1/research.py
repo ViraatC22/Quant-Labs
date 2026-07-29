@@ -44,6 +44,9 @@ def ask(
             payload={
                 "citations": answer.citations,
                 "special_elements": answer.special_elements,
+                "generation_mode": answer.generation_mode,
+                "writer_provider_id": answer.writer_provider_id,
+                "writer_model": answer.writer_model,
             },
         )
     )
@@ -56,6 +59,9 @@ def ask(
         citations=[CitationRead(**c) for c in answer.citations],
         special_elements=answer.special_elements,
         retrieved=answer.retrieved,
+        generation_mode=answer.generation_mode,
+        writer_provider_id=answer.writer_provider_id,
+        writer_model=answer.writer_model,
     )
 
 

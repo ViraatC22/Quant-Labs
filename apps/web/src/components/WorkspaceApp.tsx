@@ -5,12 +5,14 @@ import {
   BookMarked,
   BrainCircuit,
   CalendarCheck,
-  Crosshair,
+  CandlestickChart,
   Download,
   FileText,
   GitBranch,
+  LayoutDashboard,
   Link2,
   LineChart,
+  MessageCircleQuestion,
   Pencil,
   Plus,
   Search,
@@ -18,17 +20,23 @@ import {
   Sparkles,
   Trash2,
   Upload,
-  Wand2,
-  ZoomIn,
-  ZoomOut
+  Wand2
 } from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
 
 import { MetricTile } from "@/components/MetricTile";
+import { CalendarPanel } from "@/features/calendar/CalendarPanel";
+import { ReportsPanel } from "@/features/reports/ReportsPanel";
+import { ChartPanel } from "@/features/chart/ChartPanel";
+import { DashboardPanel } from "@/features/dashboard/DashboardPanel";
+import { GraphExplorer } from "@/features/graph/GraphExplorer";
+import { ResearchPanel } from "@/features/research/ResearchPanel";
 import { BrokerImportDialog } from "@/components/import/BrokerImportDialog";
+import { JournalInsights } from "@/components/insights/JournalInsights";
 import { PerformancePanel } from "@/components/insights/PerformancePanel";
 import { CommandPalette } from "@/components/search/CommandPalette";
 import { DashboardHeader } from "@/components/shell/DashboardHeader";
+import { SessionDesk } from "@/components/session/SessionDesk";
 import type { ParsedTrade } from "@/lib/csvImport";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -64,7 +72,19 @@ import type {
   WorkspaceState
 } from "@/lib/types";
 
-type TabKey = "vault" | "journal" | "trades" | "routine" | "insights" | "graph";
+type TabKey =
+  | "dashboard"
+  | "chart"
+  | "calendar"
+  | "reports"
+  | "desk"
+  | "vault"
+  | "journal"
+  | "trades"
+  | "routine"
+  | "insights"
+  | "research"
+  | "graph";
 
 type ImportedVaultItem = {
   title: string;
@@ -168,24 +188,6 @@ type GraphModel = {
   edges: GraphEdge[];
 };
 
-type GalaxyStar = {
-  id: string;
-  x: number;
-  y: number;
-  r: number;
-  opacity: number;
-  delay: number;
-  duration: number;
-};
-
-type GalaxyOrbit = {
-  rx: number;
-  ry: number;
-  opacity: number;
-  strokeWidth: number;
-  rotate: number;
-};
-
 type SourceStrategySignal = {
   sourceId: string;
   sourceTitle: string;
@@ -196,18 +198,6 @@ type SourceStrategySignal = {
   tags: string[];
   rules: string[];
   attributes: string[];
-};
-
-type GraphViewport = {
-  centerX: number;
-  centerY: number;
-  zoom: number;
-};
-
-type GraphDragState = {
-  startX: number;
-  startY: number;
-  startView: GraphViewport;
 };
 
 type QuickTradeDraft = {
@@ -249,11 +239,17 @@ const storageKey = "quant-labs.workspace.v1";
 const paperAccountKey = "quant-labs.paper-account.v1";
 
 const tabs: Array<{ key: TabKey; label: string; icon: typeof BookMarked }> = [
+  { key: "dashboard", label: "Dashboard", icon: LayoutDashboard },
+  { key: "chart", label: "Chart", icon: CandlestickChart },
+  { key: "calendar", label: "Calendar", icon: CalendarCheck },
+  { key: "reports", label: "Reports", icon: FileText },
+  { key: "desk", label: "Session Desk", icon: CandlestickChart },
   { key: "vault", label: "Vault", icon: BookMarked },
   { key: "journal", label: "Journal", icon: CalendarCheck },
   { key: "trades", label: "Trades", icon: LineChart },
   { key: "routine", label: "Routine", icon: CalendarCheck },
   { key: "insights", label: "Insights", icon: BrainCircuit },
+  { key: "research", label: "Research", icon: MessageCircleQuestion },
   { key: "graph", label: "Atlas", icon: GitBranch }
 ];
 
@@ -300,27 +296,6 @@ const graphCanvasWidth = 1680;
 const graphCanvasHeight = 1040;
 const graphCenterX = graphCanvasWidth / 2;
 const graphCenterY = graphCanvasHeight / 2;
-const galaxyOrbits: GalaxyOrbit[] = [
-  { rx: 150, ry: 88, opacity: 0.18, strokeWidth: 1.4, rotate: -8 },
-  { rx: 285, ry: 165, opacity: 0.13, strokeWidth: 1.1, rotate: 12 },
-  { rx: 440, ry: 260, opacity: 0.1, strokeWidth: 0.9, rotate: -16 },
-  { rx: 610, ry: 360, opacity: 0.075, strokeWidth: 0.8, rotate: 8 },
-  { rx: 735, ry: 430, opacity: 0.05, strokeWidth: 0.7, rotate: -4 }
-];
-const galaxyStars: GalaxyStar[] = Array.from({ length: 150 }, (_, index) => {
-  const xSeed = seededUnit(index, 3);
-  const ySeed = seededUnit(index, 11);
-  const sizeSeed = seededUnit(index, 23);
-  return {
-    id: `star-${index}`,
-    x: Math.round(xSeed * graphCanvasWidth),
-    y: Math.round(ySeed * graphCanvasHeight),
-    r: Number((0.45 + sizeSeed * 1.35).toFixed(2)),
-    opacity: Number((0.16 + seededUnit(index, 31) * 0.58).toFixed(2)),
-    delay: Number((-seededUnit(index, 43) * 7).toFixed(2)),
-    duration: Number((3.8 + seededUnit(index, 59) * 5.2).toFixed(2))
-  };
-});
 
 const apiBaseUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 const textLikeExtensions = [".txt", ".md", ".markdown", ".csv", ".json", ".log", ".pine", ".py"];
@@ -1185,7 +1160,7 @@ async function fallbackFileImport(file: File): Promise<ImportedVaultItem> {
 }
 
 export function WorkspaceApp() {
-  const [activeTab, setActiveTab] = useState<TabKey>("vault");
+  const [activeTab, setActiveTab] = useState<TabKey>("dashboard");
   // Seed with the empty state so the server render and the first client render
   // match. The persisted workspace is loaded from localStorage after mount (see
   // the effect below) to avoid an SSR/client hydration mismatch once data exists.
@@ -1222,17 +1197,11 @@ export function WorkspaceApp() {
     tone: "idle" | "loading" | "success" | "error";
     message: string;
   }>({ tone: "idle", message: "Waiting for a link or file." });
-  const [selectedGraphNodeId, setSelectedGraphNodeId] = useState("memory");
-  const [hoveredGraphNodeId, setHoveredGraphNodeId] = useState<string | null>(null);
-  const [graphMotionPaused, setGraphMotionPaused] = useState(false);
-  const [graphTick, setGraphTick] = useState(0);
+  const [graphFocusRequest, setGraphFocusRequest] = useState<{
+    nodeId: string;
+    requestId: number;
+  } | null>(null);
   const tradeFormRef = useRef<HTMLFormElement>(null);
-  const [graphView, setGraphView] = useState<GraphViewport>({
-    centerX: graphCanvasWidth / 2,
-    centerY: graphCanvasHeight / 2,
-    zoom: 1
-  });
-  const [graphDrag, setGraphDrag] = useState<GraphDragState | null>(null);
 
   // On mount, prefer the API as the source of truth. When it is unreachable,
   // fall back to the browser-local workspace so the app stays fully usable
@@ -1614,93 +1583,6 @@ export function WorkspaceApp() {
     () => buildGraphModel(viewState, sourceStrategySignals, strategyStats),
     [sourceStrategySignals, strategyStats, viewState]
   );
-  useEffect(() => {
-    if (activeTab !== "graph" || graphMotionPaused) return;
-    const intervalId = window.setInterval(() => {
-      setGraphTick((current) => current + 0.075);
-    }, 80);
-    return () => window.clearInterval(intervalId);
-  }, [activeTab, graphMotionPaused]);
-  const renderedGraphNodes = useMemo(
-    () =>
-      graph.nodes.map((node) => {
-        const offset = galaxyDriftForNode(node, graphTick);
-        return { ...node, x: node.x + offset.x, y: node.y + offset.y };
-      }),
-    [graph.nodes, graphTick]
-  );
-  const graphNodeLookup = useMemo(
-    () => new Map(renderedGraphNodes.map((node) => [node.id, node])),
-    [renderedGraphNodes]
-  );
-  const selectedGraphNode = graphNodeLookup.get(selectedGraphNodeId) ?? graph.nodes[0];
-  const activeGraphNode = hoveredGraphNodeId
-    ? graphNodeLookup.get(hoveredGraphNodeId) ?? selectedGraphNode
-    : selectedGraphNode;
-  const selectedGraphEdges = useMemo(
-    () =>
-      selectedGraphNode
-        ? graph.edges.filter((edge) => edge.from === selectedGraphNode.id || edge.to === selectedGraphNode.id)
-        : [],
-    [graph.edges, selectedGraphNode]
-  );
-  const activeGraphEdges = useMemo(
-    () =>
-      activeGraphNode
-        ? graph.edges.filter((edge) => edge.from === activeGraphNode.id || edge.to === activeGraphNode.id)
-        : [],
-    [activeGraphNode, graph.edges]
-  );
-  const focusedGraphNodeIds = useMemo(() => {
-    const ids = new Set<string>();
-    if (activeGraphNode) ids.add(activeGraphNode.id);
-    activeGraphEdges.forEach((edge) => {
-      ids.add(edge.from);
-      ids.add(edge.to);
-    });
-    return ids;
-  }, [activeGraphEdges, activeGraphNode]);
-  const graphFocusMode = Boolean(activeGraphNode && activeGraphNode.type !== "memory");
-  const graphViewBox = useMemo(() => {
-    const width = graphCanvasWidth / graphView.zoom;
-    const height = graphCanvasHeight / graphView.zoom;
-    return `${graphView.centerX - width / 2} ${graphView.centerY - height / 2} ${width} ${height}`;
-  }, [graphView]);
-
-  function selectGraphNode(nodeId: string, focus = false) {
-    const node = graphNodeLookup.get(nodeId);
-    setSelectedGraphNodeId(nodeId);
-    setGraphMotionPaused(true);
-    if (focus && node) focusGraphNode(node);
-  }
-
-  function focusGraphNode(node: PositionedGraphNode) {
-    setGraphView({ centerX: node.x, centerY: node.y, zoom: Math.max(1.35, graphView.zoom) });
-  }
-
-  function zoomGraph(delta: number) {
-    setGraphView((current) => ({
-      ...current,
-      zoom: Math.min(2.4, Math.max(0.7, Number((current.zoom + delta).toFixed(2))))
-    }));
-  }
-
-  function resetGraphView() {
-    setGraphView({ centerX: graphCanvasWidth / 2, centerY: graphCanvasHeight / 2, zoom: 1 });
-    setGraphMotionPaused(false);
-  }
-
-  function panGraph(event: React.PointerEvent<SVGSVGElement>) {
-    if (!graphDrag) return;
-    const rect = event.currentTarget.getBoundingClientRect();
-    const unitX = graphCanvasWidth / rect.width / graphDrag.startView.zoom;
-    const unitY = graphCanvasHeight / rect.height / graphDrag.startView.zoom;
-    setGraphView({
-      ...graphDrag.startView,
-      centerX: graphDrag.startView.centerX - (event.clientX - graphDrag.startX) * unitX,
-      centerY: graphDrag.startView.centerY - (event.clientY - graphDrag.startY) * unitY
-    });
-  }
 
   async function refreshTradeRecommendations() {
     if (!apiOnline) return;
@@ -2452,6 +2334,13 @@ export function WorkspaceApp() {
           state={state}
           tabs={tabs}
           onSelectTab={(tab) => setActiveTab(tab as TabKey)}
+          onFocusGraphNode={(nodeId) => {
+            setActiveTab("graph");
+            setGraphFocusRequest((current) => ({
+              nodeId,
+              requestId: (current?.requestId ?? 0) + 1
+            }));
+          }}
           onClose={() => setCommandOpen(false)}
         />
       )}
@@ -2505,9 +2394,13 @@ export function WorkspaceApp() {
       <div
         className={[
           "mx-auto grid gap-6 px-4 py-6",
+          // The graph and dashboard are full-bleed views; every other tab keeps
+          // the narrower column plus the right-hand aside.
           activeTab === "graph"
             ? "max-w-[1880px]"
-            : "max-w-7xl lg:grid-cols-[1fr_340px]"
+            : ["dashboard", "chart", "calendar", "reports"].includes(activeTab)
+              ? "max-w-[1600px]"
+              : "max-w-7xl lg:grid-cols-[1fr_340px]"
         ].join(" ")}
       >
         <section className="space-y-6">
@@ -2536,7 +2429,11 @@ export function WorkspaceApp() {
               )}
             </div>
           )}
-          {hydrated &&
+          {/* The dashboard is a self-contained view with its own header, so the
+              onboarding banner and workspace tiles are suppressed there rather
+              than pushing the desk below the fold. */}
+          {!["dashboard", "chart", "calendar", "reports"].includes(activeTab) &&
+            hydrated &&
             !state.vault.length &&
             !state.journal.length &&
             !state.trades.length && (
@@ -2569,18 +2466,20 @@ export function WorkspaceApp() {
                 </div>
               </div>
             )}
-          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-            {metrics.map((metric) => (
-              <MetricTile
-                key={metric.label}
-                label={metric.label}
-                value={metric.value}
-                detail={metric.detail}
-                hint={metric.hint}
-                icon={metric.icon}
-              />
-            ))}
-          </div>
+          {!["dashboard", "chart", "calendar", "reports"].includes(activeTab) && (
+            <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              {metrics.map((metric) => (
+                <MetricTile
+                  key={metric.label}
+                  label={metric.label}
+                  value={metric.value}
+                  detail={metric.detail}
+                  hint={metric.hint}
+                  icon={metric.icon}
+                />
+              ))}
+            </div>
+          )}
 
           {activeTab === "vault" && (
             <section
@@ -3518,6 +3417,9 @@ export function WorkspaceApp() {
                 <div className="mt-4">
                   <PerformancePanel trades={state.trades} />
                 </div>
+                <div className="mt-4 rounded-lg border border-line bg-card/86 p-4 shadow-panel md:p-5">
+                  <JournalInsights trades={state.trades} />
+                </div>
                 <RoutinePlaybookCard routine={recommendedRoutine} />
                 {optimalStrategy && (
                   <div className="mt-4">
@@ -3608,324 +3510,73 @@ export function WorkspaceApp() {
             </section>
           )}
 
-          {activeTab === "graph" && (
-            <section
-              aria-labelledby="graph-tab"
-              className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px]"
-              id="graph-panel"
-              role="tabpanel"
-            >
-              <section className="rounded-lg border border-line bg-card/86 p-4 shadow-panel">
-                <div className="flex items-center justify-between gap-4">
-                  <div>
-                    <h2 className="text-base font-semibold text-ink">Strategy Atlas</h2>
-                    <p className="mt-1 text-sm text-ink/58">
-                      {graph.nodes.length} nodes / {graph.edges.length} edges
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      className="grid h-9 w-9 place-items-center rounded-md border border-line bg-card text-ink/70 transition hover:bg-paper"
-                      onClick={() => setGraphMotionPaused((current) => !current)}
-                      title={graphMotionPaused ? "Resume drift" : "Pause drift"}
-                      type="button"
-                    >
-                      <Activity aria-hidden="true" size={17} strokeWidth={2.2} />
-                    </button>
-                    <button
-                      className="grid h-9 w-9 place-items-center rounded-md border border-line bg-card text-ink/70 transition hover:bg-paper"
-                      onClick={() => zoomGraph(0.18)}
-                      title="Zoom in"
-                      type="button"
-                    >
-                      <ZoomIn aria-hidden="true" size={17} />
-                    </button>
-                    <button
-                      className="grid h-9 w-9 place-items-center rounded-md border border-line bg-card text-ink/70 transition hover:bg-paper"
-                      onClick={() => zoomGraph(-0.18)}
-                      title="Zoom out"
-                      type="button"
-                    >
-                      <ZoomOut aria-hidden="true" size={17} />
-                    </button>
-                    <button
-                      className="grid h-9 w-9 place-items-center rounded-md border border-line bg-card text-ink/70 transition hover:bg-paper"
-                      onClick={() => selectedGraphNode && focusGraphNode(selectedGraphNode)}
-                      title="Focus selected node"
-                      type="button"
-                    >
-                      <Crosshair aria-hidden="true" size={17} />
-                    </button>
-                    <button
-                      className="grid h-9 w-9 place-items-center rounded-md border border-line bg-card text-ink/70 transition hover:bg-paper"
-                      onClick={resetGraphView}
-                      title="Recenter"
-                      type="button"
-                    >
-                      <GitBranch aria-hidden="true" size={17} />
-                    </button>
-                  </div>
-                </div>
-
-                <div className="mt-5 overflow-hidden rounded-lg border border-ink/10 bg-[#060911]">
-                  <svg
-                    aria-label="Trading relationship atlas"
-                    className="h-[min(78vh,780px)] min-h-[640px] w-full cursor-grab touch-none active:cursor-grabbing"
-                    onPointerDown={(event) => {
-                      if ((event.target as Element).closest("[data-graph-node='true']")) return;
-                      setGraphDrag({
-                        startX: event.clientX,
-                        startY: event.clientY,
-                        startView: graphView
-                      });
-                    }}
-                    onPointerLeave={() => setGraphDrag(null)}
-                    onPointerMove={panGraph}
-                    onPointerUp={() => setGraphDrag(null)}
-                    onWheel={(event) => {
-                      event.preventDefault();
-                      zoomGraph(event.deltaY > 0 ? -0.12 : 0.12);
-                    }}
-                    role="img"
-                    viewBox={graphViewBox}
-                  >
-                    <defs>
-                      <radialGradient id="atlasGalaxyCore" cx="50%" cy="50%" r="50%">
-                        <stop offset="0%" stopColor="#f7f3ea" stopOpacity="0.52" />
-                        <stop offset="30%" stopColor="#7bd7e8" stopOpacity="0.15" />
-                        <stop offset="72%" stopColor="#6d5bd0" stopOpacity="0.07" />
-                        <stop offset="100%" stopColor="#060911" stopOpacity="0" />
-                      </radialGradient>
-                      <filter id="atlasStarGlow" height="220%" width="220%" x="-60%" y="-60%">
-                        <feGaussianBlur stdDeviation="3" />
-                      </filter>
-                    </defs>
-                    <rect fill="#060911" height="3000" width="3600" x="-960" y="-980" />
-                    <circle
-                      cx={graphCenterX}
-                      cy={graphCenterY}
-                      fill="url(#atlasGalaxyCore)"
-                      opacity="0.95"
-                      r="560"
-                    />
-                    <g className={graphMotionPaused ? "galaxy-paused" : ""}>
-                      {galaxyStars.map((star) => (
-                        <circle
-                          className="galaxy-star-twinkle"
-                          cx={star.x}
-                          cy={star.y}
-                          fill="#f7f3ea"
-                          key={star.id}
-                          opacity={star.opacity}
-                          r={star.r}
-                          style={{
-                            animationDelay: `${star.delay}s`,
-                            animationDuration: `${star.duration}s`
-                          }}
-                        />
-                      ))}
-                      {galaxyOrbits.map((orbit, index) => (
-                        <ellipse
-                          className="galaxy-orbit-drift"
-                          cx={graphCenterX}
-                          cy={graphCenterY}
-                          fill="none"
-                          key={`orbit-${index}`}
-                          opacity={orbit.opacity}
-                          rx={orbit.rx}
-                          ry={orbit.ry}
-                          stroke="#8dd6e5"
-                          strokeDasharray="4 12"
-                          strokeWidth={orbit.strokeWidth}
-                          style={{
-                            animationDelay: `${index * -2.6}s`,
-                            animationDuration: `${24 + index * 8}s`,
-                            transform: `rotate(${orbit.rotate}deg)`,
-                            transformBox: "fill-box",
-                            transformOrigin: "center"
-                          }}
-                        />
-                      ))}
-                    </g>
-                    <g opacity="0.38">
-                      {["Source", "Strategy", "Execution", "Trades", "Markets", "State"].map((label, index) => (
-                        <text
-                          fill="#d8d1c3"
-                          fontSize="11"
-                          fontWeight={700}
-                          key={label}
-                          opacity="0.42"
-                          textAnchor="middle"
-                          x={graphCenterX + Math.cos(index * 1.047 + 0.3) * 690}
-                          y={graphCenterY + Math.sin(index * 1.047 + 0.3) * 405}
-                        >
-                          {label}
-                        </text>
-                      ))}
-                    </g>
-                    {renderedGraphNodes
-                      .filter((node) => node.type === "memory")
-                      .map((node) => (
-                        <circle
-                          cx={node.x}
-                          cy={node.y}
-                          fill="#f7f3ea"
-                          filter="url(#atlasStarGlow)"
-                          key={`${node.id}-glow`}
-                          opacity="0.35"
-                          r={graphNodeRadius(node) * 2.1}
-                        />
-                      ))}
-                    {graph.edges.map((edge) => {
-                      const from = graphNodeLookup.get(edge.from);
-                      const to = graphNodeLookup.get(edge.to);
-                      if (!from || !to) return null;
-                      const active =
-                        graphFocusMode && (edge.from === activeGraphNode?.id || edge.to === activeGraphNode?.id);
-                      const memoryEdge = from.type === "memory" || to.type === "memory";
-                      const opacity = active ? 0.92 : graphFocusMode ? 0.025 : memoryEdge ? 0.08 : 0.15;
-
-                      return (
-                        <path
-                          d={graphEdgePath(from, to)}
-                          fill="none"
-                          key={edge.id}
-                          opacity={opacity}
-                          stroke={active ? "#f7f3ea" : "#d8d1c3"}
-                          strokeLinecap="round"
-                          strokeWidth={active ? 2 : 0.85}
-                        />
-                      );
-                    })}
-                    {renderedGraphNodes.map((node) => {
-                      const style = graphNodeStyle(node.type);
-                      const selected = selectedGraphNode?.id === node.id;
-                      const focused = focusedGraphNodeIds.has(node.id);
-                      const labelVisible = graphLabelVisible(node, selected, focused, graphFocusMode);
-                      const muted = graphFocusMode && !focused;
-                      const radius = graphNodeRadius(node);
-
-                      return (
-                        <g
-                          className="cursor-pointer outline-none"
-                          data-graph-node="true"
-                          key={node.id}
-                          onClick={() => selectGraphNode(node.id, true)}
-                          onMouseEnter={() => setHoveredGraphNodeId(node.id)}
-                          onMouseLeave={() => setHoveredGraphNodeId(null)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter" || event.key === " ") {
-                              event.preventDefault();
-                              selectGraphNode(node.id, true);
-                            }
-                          }}
-                          role="button"
-                          tabIndex={0}
-                        >
-                          <title>{node.label}</title>
-                          <circle
-                            cx={node.x}
-                            cy={node.y}
-                            fill={style.fill}
-                            opacity={muted ? 0.38 : 1}
-                            r={radius}
-                            stroke={selected ? "#ffffff" : style.stroke}
-                            strokeWidth={selected ? 3 : focused ? 2 : 1.25}
-                          />
-                          <circle
-                            cx={node.x}
-                            cy={node.y}
-                            fill="none"
-                            opacity={muted ? 0.08 : selected ? 0.45 : 0.18}
-                            r={radius + 7}
-                            stroke={selected ? "#ffffff" : style.stroke}
-                            strokeWidth="1"
-                          />
-                          {labelVisible && (
-                            <text
-                              fill="#f7f3ea"
-                              fontSize={selected ? "13" : "12"}
-                              fontWeight={selected ? 700 : 600}
-                              opacity={selected ? 1 : focused ? 0.9 : 0.68}
-                              textAnchor="middle"
-                              x={node.x}
-                              y={node.y + radius + 15}
-                            >
-                              {graphLabelLines(node.label, node.type).map((line, index) => (
-                                <tspan dy={index === 0 ? 0 : 13} key={`${node.id}-label-${index}`} x={node.x}>
-                                  {line}
-                                </tspan>
-                              ))}
-                            </text>
-                          )}
-                        </g>
-                      );
-                    })}
-                  </svg>
-                </div>
-              </section>
-
-              <section className="h-fit rounded-lg border border-line bg-card/72 p-3 shadow-panel xl:sticky xl:top-6">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-xl font-semibold text-ink">Node Detail</h2>
-                  <ShieldCheck aria-hidden="true" className="text-moss" size={20} strokeWidth={2.1} />
-                </div>
-                {selectedGraphNode && (
-                  <div className="mt-4">
-                    <span className="rounded-md bg-paper px-2 py-1 text-xs font-semibold uppercase text-ink/54">
-                      {selectedGraphNode.type}
-                    </span>
-                    <h3 className="mt-3 text-xl font-semibold leading-tight text-ink">{selectedGraphNode.label}</h3>
-                    <ReadMoreText
-                      className="mt-2 text-sm leading-6 text-ink/64"
-                      limit={180}
-                      value={selectedGraphNode.detail}
-                    />
-                    {selectedGraphNode.pnl !== undefined && (
-                      <p
-                        className={[
-                          "mt-3 text-sm font-semibold",
-                          selectedGraphNode.pnl >= 0 ? "text-moss" : "text-loss"
-                        ].join(" ")}
-                      >
-                        {formatCurrency(selectedGraphNode.pnl)}
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                <div className="mt-5 border-t border-line pt-4">
-                  <h3 className="text-sm font-semibold text-ink">Connections</h3>
-                  <div className="mt-3 grid gap-2">
-                    {selectedGraphEdges.slice(0, 12).map((edge) => {
-                      const otherId = edge.from === selectedGraphNode?.id ? edge.to : edge.from;
-                      const other = graphNodeLookup.get(otherId);
-
-                      return (
-                        <button
-                          className="flex min-h-10 items-center justify-between gap-3 rounded-md border border-line bg-card px-3 text-left text-sm transition hover:bg-paper"
-                          key={edge.id}
-                          onClick={() => other && selectGraphNode(other.id, true)}
-                          type="button"
-                        >
-                          <span className="font-medium text-ink">{other?.label ?? "Unknown"}</span>
-                          <span className="text-xs font-medium text-ink/48">{edge.label}</span>
-                        </button>
-                      );
-                    })}
-                    {!selectedGraphEdges.length && (
-                      <div className="rounded-md border border-line bg-paper/60 px-3 py-3 text-sm font-medium text-ink/52">
-                        No connections yet
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </section>
+          {activeTab === "dashboard" && (
+            <section aria-labelledby="dashboard-tab" id="dashboard-panel" role="tabpanel">
+              <DashboardPanel trades={state.trades} />
             </section>
+          )}
+
+          {activeTab === "chart" && (
+            <section aria-labelledby="chart-tab" id="chart-panel" role="tabpanel">
+              <ChartPanel
+                onLogTrade={(symbol, price) => {
+                  // Hand the ticket a draft priced from our own quote layer,
+                  // never from the TradingView pane, then switch tabs so the
+                  // existing fill effect picks it up.
+                  setPendingTradeDraft({
+                    draft: { symbol, entry_price: price },
+                    title: `${symbol} from the chart`
+                  });
+                  setActiveTab("trades");
+                }}
+              />
+            </section>
+          )}
+
+          {activeTab === "calendar" && (
+            <section aria-labelledby="calendar-tab" id="calendar-panel" role="tabpanel">
+              <CalendarPanel />
+            </section>
+          )}
+
+          {activeTab === "reports" && (
+            <section aria-labelledby="reports-tab" id="reports-panel" role="tabpanel">
+              <ReportsPanel />
+            </section>
+          )}
+
+          {activeTab === "desk" && (
+            <SessionDesk
+              journal={state.journal}
+              onOpenJournal={() => setActiveTab("journal")}
+              onOpenResearch={() => setActiveTab("research")}
+              onOpenTrades={() => setActiveTab("trades")}
+              trades={state.trades}
+              vault={state.vault}
+            />
+          )}
+
+          {activeTab === "research" && (
+            <section aria-labelledby="research-tab" id="research-panel" role="tabpanel">
+              <ResearchPanel />
+            </section>
+          )}
+
+          {activeTab === "graph" && (
+            <GraphExplorer
+              focusRequest={graphFocusRequest}
+              initialGraph={graph}
+              online={apiOnline}
+              onOpenSource={(sourceDocumentId, sourceTitle) => {
+                const source = state.vault.find((item) => item.id === sourceDocumentId);
+                setQuery(source?.title ?? sourceTitle);
+                setActiveTab("vault");
+              }}
+            />
           )}
         </section>
 
-        {activeTab !== "graph" && (
+        {!["graph", "dashboard", "chart", "calendar", "reports"].includes(activeTab) && (
         <aside className="space-y-6">
           <section className="rounded-lg border border-line bg-card/86 p-4 shadow-panel">
             <h2 className="text-base font-semibold text-ink">Workspace</h2>
@@ -3954,13 +3605,19 @@ export function WorkspaceApp() {
             <div className="mt-4 space-y-3 text-sm">
               <SnapshotRow label="Mode" value={aiRouterStatus?.mode ?? (apiOnline ? "unknown" : "offline")} />
               <SnapshotRow
-                label="Active"
-                value={aiRouterStatus?.active_provider_id ?? (aiRouterStatus?.mode === "auto" ? "none" : "local rules")}
+                label="Research route"
+                value={
+                  aiRouterStatus?.research_active_provider_id
+                  ?? (aiRouterStatus?.research_mode === "auto" ? "grounded fallback" : "local rules")
+                }
               />
               <div className="flex flex-wrap gap-2">
                 {aiRouterStatus?.providers.map((provider) => (
                   <Badge key={provider.id} variant={provider.configured ? "default" : "secondary"}>
-                    {provider.label}
+                    {provider.priority}. {provider.label}
+                    {provider.cooldown_remaining_seconds > 0
+                      ? ` · retry ${provider.cooldown_remaining_seconds}s`
+                      : ""}
                   </Badge>
                 ))}
                 {!aiRouterStatus?.providers.length && <Badge variant="secondary">local semantic rules</Badge>}
@@ -5431,96 +5088,6 @@ function seededUnit(value: string | number, salt: number) {
   const seed = typeof value === "number" ? value : hashNumber(value);
   const raw = Math.sin(seed * 12.9898 + salt * 78.233) * 43758.5453;
   return raw - Math.floor(raw);
-}
-
-function galaxyDriftForNode(node: GraphNode, tick: number) {
-  if (node.type === "memory") return { x: 0, y: 0 };
-  const seed = hashNumber(node.id);
-  const amplitude = 4 + seededUnit(seed, 5) * 10;
-  const speed = 0.42 + seededUnit(seed, 9) * 0.5;
-  const phase = seededUnit(seed, 13) * Math.PI * 2;
-  return {
-    x: Math.cos(tick * speed + phase) * amplitude,
-    y: Math.sin(tick * (speed * 0.82) + phase * 0.7) * amplitude * 0.72
-  };
-}
-
-function graphNodeStyle(type: GraphNodeType) {
-  const styles: Record<GraphNodeType, { fill: string; stroke: string }> = {
-    memory: { fill: "#f7f3ea", stroke: "#ffffff" },
-    strategy: { fill: "#266f83", stroke: "#8dd6e5" },
-    trade: { fill: "#a85f32", stroke: "#e2a06f" },
-    symbol: { fill: "#476a4d", stroke: "#9cc69f" },
-    setup: { fill: "#b48924", stroke: "#e0c36e" },
-    emotion: { fill: "#9f3f46", stroke: "#e79399" },
-    source: { fill: "#6d5bd0", stroke: "#b8adff" },
-    journal: { fill: "#2f7f62", stroke: "#94d8b9" },
-    tag: { fill: "#6f6b5f", stroke: "#d8d1c3" }
-  };
-
-  return styles[type];
-}
-
-function graphNodeRadius(node: GraphNode) {
-  if (node.type === "memory") return 34;
-  return Math.min(22, 9 + Math.sqrt(node.weight) * 3);
-}
-
-function graphEdgePath(from: PositionedGraphNode, to: PositionedGraphNode) {
-  const sourceX = from.x < to.x ? from.x + graphNodeRadius(from) : from.x - graphNodeRadius(from);
-  const targetX = from.x < to.x ? to.x - graphNodeRadius(to) : to.x + graphNodeRadius(to);
-  const midX = sourceX + (targetX - sourceX) / 2;
-  const verticalBias = Math.abs(from.y - to.y) > 260 ? 36 : 0;
-  return `M ${sourceX} ${from.y} C ${midX} ${from.y + verticalBias}, ${midX} ${to.y - verticalBias}, ${targetX} ${to.y}`;
-}
-
-function graphLabelVisible(
-  node: GraphNode,
-  selected: boolean,
-  focused: boolean,
-  focusMode: boolean
-) {
-  if (selected) return true;
-  if (focusMode) return focused;
-  if (node.type === "memory" || node.type === "strategy" || node.type === "source") return true;
-  if (node.type === "trade" || node.type === "setup") return node.weight > 1;
-  if (node.type === "symbol" || node.type === "emotion" || node.type === "journal") return node.weight > 1;
-  return node.weight > 2;
-}
-
-function graphLabelLines(value: string, type: GraphNodeType) {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  const maxChars = type === "trade" ? 14 : type === "tag" ? 13 : 16;
-  if (normalized.length <= maxChars) return [normalized];
-  const words = normalized.split(" ");
-  const lines: string[] = [];
-  let current = "";
-
-  words.forEach((word) => {
-    if (lines.length >= 2) return;
-    const next = current ? `${current} ${word}` : word;
-    if (next.length <= maxChars) {
-      current = next;
-      return;
-    }
-    if (current) {
-      lines.push(current);
-      current = word;
-    } else {
-      lines.push(word.slice(0, maxChars));
-      current = "";
-    }
-  });
-  if (current && lines.length < 2) lines.push(current);
-
-  const remainder = words.slice(lines.join(" ").split(" ").length).join(" ");
-  if (remainder && lines.length) {
-    lines[lines.length - 1] =
-      lines[lines.length - 1].length > maxChars - 3
-        ? `${lines[lines.length - 1].slice(0, maxChars - 3)}...`
-        : `${lines[lines.length - 1]}...`;
-  }
-  return lines.slice(0, 2);
 }
 
 function bestTradeLabel(trades: TradeEntry[]) {

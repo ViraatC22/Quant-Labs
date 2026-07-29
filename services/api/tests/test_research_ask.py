@@ -43,7 +43,7 @@ def test_answers_with_resolvable_citations() -> None:
     assert answer["citations"], "expected at least one citation"
     # Every citation resolves to a real chunk or claim (has a source + snippet).
     for citation in answer["citations"]:
-        assert citation["kind"] in ("chunk", "claim")
+        assert citation["kind"] in ("chunk", "claim", "trade")
         assert citation["source_title"]
         assert citation["snippet"]
 
@@ -72,3 +72,74 @@ def test_conversation_history_is_recorded() -> None:
     history = client.get("/api/v1/research/conversations").json()
     assert len(history) >= 1
     assert history[0]["question"] == "anything"
+
+
+def test_loss_review_uses_matching_trade_note_not_unrelated_papers() -> None:
+    losing = client.post(
+        "/api/v1/trades",
+        json={
+            "symbol": "MES",
+            "asset_class": "future",
+            "side": "long",
+            "entry_time": "2026-07-06T14:45:00Z",
+            "exit_time": "2026-07-06T15:10:00Z",
+            "entry_price": "5600",
+            "exit_price": "5590",
+            "quantity": "2",
+            "contract_multiplier": "5",
+            "fees": "2",
+            "emotional_state_before": "chased",
+            "journal_summary": (
+                "Chased the breakout late after it already ran. "
+                "Should have waited for the retest."
+            ),
+            "metadata": {
+                "strategy": "Opening Range Breakout",
+                "setup": "Opening range breakout",
+            },
+        },
+    )
+    assert losing.status_code == 201
+    winning = client.post(
+        "/api/v1/trades",
+        json={
+            "symbol": "MES",
+            "asset_class": "future",
+            "side": "long",
+            "entry_time": "2026-07-09T14:45:00Z",
+            "exit_time": "2026-07-09T15:10:00Z",
+            "entry_price": "5600",
+            "exit_price": "5606.5",
+            "quantity": "2",
+            "contract_multiplier": "5",
+            "fees": "1.25",
+            "journal_summary": "Waited for confirmation and followed the plan.",
+            "metadata": {"strategy": "Opening Range Breakout"},
+        },
+    )
+    assert winning.status_code == 201
+    _make_source(
+        "Opening range breakout playbook",
+        "Mark the first 15-minute high and low. Wait for confirmation before entry.",
+    )
+    _make_source(
+        "Signature-Based Optimal Execution for Statistical Arbitrage",
+        "A path-dependent signature model controls statistical-arbitrage execution speed.",
+    )
+
+    answer = client.post(
+        "/api/v1/research/ask",
+        json={"question": "Why did we lose the MES trade?"},
+    ).json()
+
+    assert answer["route"] == "trade_review"
+    assert answer["generation_mode"] == "local"
+    assert "chased" in answer["answer_markdown"].lower()
+    assert "retest" in answer["answer_markdown"].lower()
+    assert "signature-based" not in answer["answer_markdown"].lower()
+    assert answer["citations"][0]["kind"] == "trade"
+    assert answer["retrieved"]["trades"][0]["trade_id"] == losing.json()["id"]
+    assert all(
+        "signature-based" not in chunk["source_title"].lower()
+        for chunk in answer["retrieved"]["chunks"]
+    )

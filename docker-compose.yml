@@ -47,6 +47,26 @@ services:
       REDIS_URL: ${REDIS_URL:-redis://redis:6379/0}
       MINIO_ENDPOINT: ${MINIO_ENDPOINT:-minio:9000}
       MINIO_BUCKET: ${MINIO_BUCKET:-trading-vault}
+      AI_ENRICHMENT_MODE: ${AI_ENRICHMENT_MODE:-local}
+      RESEARCH_WRITER_MODE: ${RESEARCH_WRITER_MODE:-auto}
+      AI_PROVIDER_ORDER: ${AI_PROVIDER_ORDER:-gemini,groq,openrouter,cerebras,ollama,openai}
+      AI_REQUEST_TIMEOUT_SECONDS: ${AI_REQUEST_TIMEOUT_SECONDS:-18}
+      AI_RATE_LIMIT_COOLDOWN_SECONDS: ${AI_RATE_LIMIT_COOLDOWN_SECONDS:-60}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-5.6}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-openrouter/free}
+      GROQ_API_KEY: ${GROQ_API_KEY:-}
+      GROQ_MODEL: ${GROQ_MODEL:-llama-3.1-8b-instant}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash}
+      CEREBRAS_API_KEY: ${CEREBRAS_API_KEY:-}
+      CEREBRAS_MODEL: ${CEREBRAS_MODEL:-gpt-oss-120b}
+      # The API runs inside Docker, while Ollama runs on the macOS host.
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+      OLLAMA_CHAT_ENABLED: ${OLLAMA_CHAT_ENABLED:-false}
+      OLLAMA_CHAT_MODEL: ${OLLAMA_CHAT_MODEL:-qwen3:4b}
+      OLLAMA_REQUEST_TIMEOUT_SECONDS: ${OLLAMA_REQUEST_TIMEOUT_SECONDS:-120}
     ports:
       - "8000:8000"
     depends_on:

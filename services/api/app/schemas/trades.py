@@ -102,6 +102,40 @@ class MarketQuoteRead(BaseModel):
     market_time: datetime | None = None
     delayed: bool = True
     stale: bool = False
+    bid: Decimal | None = None
+    ask: Decimal | None = None
+    spread: Decimal | None = None
+    # See market_data.PRICE_BASIS_*. Clients sizing real orders must branch on
+    # `executable` rather than reading `last_price` as a fill price.
+    price_basis: str
+    executable: bool = False
+    proxy_note: str | None = None
+
+
+class MarketContextRead(BaseModel):
+    symbol: str
+    provider_symbol: str
+    provider: str
+    interval: str
+    lookback: str
+    as_of: datetime
+    delayed: bool = True
+    stale: bool = False
+    sample_size: int
+    last_price: float
+    change_percent: float
+    rsi_14: float | None = None
+    atr_percent: float | None = None
+    bollinger_width_percent: float | None = None
+    volume_percentile: float | None = None
+    trend_efficiency: float | None = None
+    flow: str
+    bearing: str
+    pulse: str
+    confidence: float = Field(ge=0.0, le=1.0)
+    limitations: list[str] = Field(default_factory=list)
+    price_basis: str
+    proxy_note: str | None = None
 
 
 class StrategyEvaluationRequest(BaseModel):

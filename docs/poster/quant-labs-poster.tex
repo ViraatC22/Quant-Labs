@@ -1,0 +1,638 @@
+%==============================================================================
+% Quant Labs -- ISEF-style research poster
+% Size: 3 ft wide x 2 ft tall (36 in x 24 in / 91.44 cm x 60.96 cm)
+%
+% Compile:
+%   tectonic quant-labs-poster.tex
+%   latexmk -pdf quant-labs-poster.tex
+%==============================================================================
+\documentclass[final]{beamer}
+\mode<presentation>{}
+
+\usepackage[orientation=landscape,size=custom,width=91.44,height=60.96,scale=0.94]{beamerposter}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[scaled]{helvet}
+\renewcommand\familydefault{\sfdefault}
+\usepackage{graphicx}
+\usepackage{ragged2e}
+\usepackage[most]{tcolorbox}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,calc}
+\graphicspath{{assets/}}
+
+% ---- Professional research-poster palette ----------------------------------
+\definecolor{posterbg}{HTML}{F8F7F2}
+\definecolor{primary}{HTML}{17313A}
+\definecolor{primary2}{HTML}{234650}
+\definecolor{accent}{HTML}{0E7490}
+\definecolor{accent2}{HTML}{217A68}
+\definecolor{warning}{HTML}{B7791F}
+\definecolor{ink}{HTML}{111827}
+\definecolor{muted}{HTML}{56616D}
+\definecolor{panel}{HTML}{FFFFFF}
+\definecolor{panelsoft}{HTML}{EEF5F3}
+\definecolor{line}{HTML}{DDE5E2}
+\definecolor{cream}{HTML}{FFF9ED}
+
+\setbeamercolor{background canvas}{bg=posterbg}
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{headline}{}
+\setbeamertemplate{footline}{}
+\setbeamertemplate{frametitle}{}
+\setbeamertemplate{itemize item}{\color{accent}$\blacktriangleright$}
+\setbeamercolor{itemize item}{fg=accent}
+\setbeamersize{text margin left=1.22cm, text margin right=1.22cm}
+\setlength{\parindent}{0pt}
+\setlength{\columnsep}{1.05cm}
+\hyphenpenalty=10000
+\exhyphenpenalty=10000
+\emergencystretch=2em
+\color{ink}
+
+% ---- Type scale -------------------------------------------------------------
+\newcommand{\kickerfont}{\fontsize{13.5}{16}\selectfont}
+\newcommand{\titlefont}{\fontsize{60}{64}\selectfont}
+\newcommand{\subtitlefont}{\fontsize{24}{29}\selectfont}
+\newcommand{\claimfont}{\fontsize{18.5}{23}\selectfont}
+\newcommand{\sectionfont}{\fontsize{24.5}{29}\selectfont}
+\newcommand{\bodyfont}{\fontsize{17.6}{22}\selectfont}
+\newcommand{\smallbodyfont}{\fontsize{15.2}{19}\selectfont}
+\newcommand{\captionfont}{\fontsize{13.1}{16}\selectfont}
+\newcommand{\microfont}{\fontsize{10.8}{13}\selectfont}
+
+% ---- Components -------------------------------------------------------------
+\newenvironment{sectionblock}[1]{%
+  \begin{tcolorbox}[
+    enhanced,
+    colback=panel,
+    colframe=line,
+    boxrule=0.65pt,
+    arc=2.2mm,
+    left=4mm,
+    right=4mm,
+    top=3.7mm,
+    bottom=3.9mm,
+    before skip=2.9mm,
+    after skip=0mm,
+    width=\linewidth
+  ]
+  {\color{primary}\sectionfont\bfseries #1\par}
+  \vspace{1.5mm}
+  \bodyfont\RaggedRight
+}{%
+  \end{tcolorbox}
+}
+
+\newenvironment{softblock}{%
+  \begin{tcolorbox}[
+    enhanced,
+    colback=panelsoft,
+    colframe=line,
+    boxrule=0.55pt,
+    arc=2mm,
+    left=3.2mm,
+    right=3.2mm,
+    top=2.8mm,
+    bottom=3mm,
+    before skip=1.6mm,
+    after skip=0mm
+  ]
+}{%
+  \end{tcolorbox}
+}
+
+\newcommand{\screenshotbox}[2][]{%
+  \begin{tcolorbox}[
+    enhanced,
+    colback=white,
+    colframe=line,
+    boxrule=0.65pt,
+    arc=2.4mm,
+    left=0.8mm,
+    right=0.8mm,
+    top=1mm,
+    bottom=1mm,
+    before skip=1.8mm,
+    after skip=1.2mm,
+    width=\linewidth
+  ]
+    \centering\includegraphics[#1]{#2}
+  \end{tcolorbox}
+}
+
+\newcommand{\questioncard}[1]{%
+  \begin{softblock}
+    {\bodyfont\itshape ``#1''\par}
+  \end{softblock}
+}
+
+\newcommand{\feature}[2]{%
+  \begin{minipage}[t]{0.485\linewidth}
+    \begin{softblock}
+      {\smallbodyfont\bfseries\color{primary}#1\par}
+      \vspace{0.5mm}
+      {\captionfont\color{muted}#2\par}
+    \end{softblock}
+  \end{minipage}
+}
+
+\newcommand{\metricbox}[3]{%
+  \begin{minipage}[t]{#1}
+    \begin{tcolorbox}[
+      enhanced,
+      colback=cream,
+      colframe=line,
+      boxrule=0.6pt,
+      arc=2mm,
+      left=3mm,
+      right=3mm,
+      top=2.4mm,
+      bottom=2.8mm
+    ]
+      {\color{primary}\fontsize{34}{37}\selectfont\bfseries #2\par}
+      {\bodyfont\bfseries #3\par}
+    \end{tcolorbox}
+  \end{minipage}
+}
+
+\newcommand{\tagpill}[2]{%
+  \tikz[baseline=(x.base)]\node[
+    rounded corners=1.4mm,
+    fill=#1!13,
+    draw=#1!25,
+    inner xsep=2.2mm,
+    inner ysep=0.9mm,
+    font=\bfseries\captionfont,
+    text=primary
+  ] (x) {#2};%
+}
+
+\newcommand{\pipelinecard}[4]{%
+  \begin{minipage}[t]{0.238\linewidth}
+    \begin{tcolorbox}[
+      enhanced,
+      colback=panelsoft,
+      colframe=line,
+      boxrule=0.55pt,
+      arc=2mm,
+      left=3mm,
+      right=3mm,
+      top=3mm,
+      bottom=3mm,
+      height=44mm
+    ]
+      {\color{accent}\fontsize{30}{33}\selectfont\bfseries #1\hfill #4\par}
+      \vspace{0.8mm}
+      {\smallbodyfont\bfseries\color{primary}#2\par}
+      \vspace{1.2mm}
+      {\captionfont\color{muted}#3\par}
+    \end{tcolorbox}
+  \end{minipage}%
+}
+
+\newcommand{\pipelinearrow}{%
+  \begin{minipage}[t]{0.026\linewidth}
+    \vspace{9mm}
+    \centering{\color{accent}\fontsize{28}{30}\selectfont\(\rightarrow\)}
+  \end{minipage}%
+}
+
+\newcommand{\supportcard}[2]{%
+  \begin{minipage}[t]{0.318\linewidth}
+    \begin{tcolorbox}[
+      enhanced,
+      colback=panelsoft,
+      colframe=line,
+      boxrule=0.5pt,
+      arc=2mm,
+      left=3mm,
+      right=3mm,
+      top=2.6mm,
+      bottom=2.8mm,
+      height=20mm
+    ]
+      {\smallbodyfont\bfseries\color{primary}#1\par}
+      \vspace{0.6mm}
+      {\captionfont\color{muted}#2\par}
+    \end{tcolorbox}
+  \end{minipage}%
+}
+
+\newcommand{\techlogoimage}[3]{%
+  \begin{minipage}[t]{0.155\linewidth}
+    \begin{tcolorbox}[
+      enhanced,
+      colback=white,
+      colframe=line,
+      boxrule=0.5pt,
+      arc=1.8mm,
+      left=1.5mm,
+      right=1.5mm,
+      top=1.8mm,
+      bottom=1.5mm,
+      height=29mm
+    ]
+      \centering
+      \includegraphics[height=12mm,keepaspectratio]{#1}
+      \vspace{1.1mm}
+      {\microfont\bfseries\color{primary}#2\par}
+      {\microfont\color{muted}#3\par}
+    \end{tcolorbox}
+  \end{minipage}%
+}
+
+\newcommand{\roadstep}[4]{%
+  \begin{minipage}[t]{0.145\linewidth}
+    \vspace{0pt}
+    \begin{tcolorbox}[
+      enhanced,
+      colback=panelsoft,
+      colframe=line,
+      boxrule=0.5pt,
+      arc=1.8mm,
+      left=2mm,
+      right=2mm,
+      top=1.25mm,
+      bottom=1.35mm,
+      height=18mm,
+      before skip=0mm,
+      after skip=0mm
+    ]
+      {\color{accent}\fontsize{17}{19}\selectfont\bfseries #1\hfill #4\par}
+      \vspace{0.15mm}
+      {\captionfont\bfseries\color{primary}#2\par}
+      \vspace{0.05mm}
+      {\microfont\color{muted}#3\par}
+    \end{tcolorbox}
+  \end{minipage}%
+}
+
+\newcommand{\qrslot}[2]{%
+  \begin{minipage}[t]{\linewidth}
+    \centering
+    \includegraphics[width=18mm,height=18mm,keepaspectratio]{qr-demo-repo.png}\par
+    \vspace{0mm}
+    {\microfont\bfseries\color{primary}#1\par}
+  \end{minipage}%
+}
+
+\newcommand{\apasourceline}[1]{%
+  {\microfont\color{muted}#1\par\vspace{0.2mm}}
+}
+
+\tikzset{
+  pipelinebox/.style={
+    rectangle,
+    rounded corners=2mm,
+    draw=line,
+    fill=white,
+    line width=0.75pt,
+    text width=33mm,
+    minimum height=13mm,
+    align=center,
+    font=\smallbodyfont\bfseries,
+    text=primary
+  },
+  arrow/.style={-{Latex[length=3mm,width=2.2mm]}, line width=1.1pt, accent},
+  thinarrow/.style={-{Latex[length=2.4mm,width=1.8mm]}, line width=0.8pt, accent2}
+}
+
+\begin{document}
+\begin{frame}[t,plain]
+
+% ---- Header -----------------------------------------------------------------
+\begin{tcolorbox}[
+  enhanced,
+  colback=primary,
+  colframe=primary,
+  boxrule=0pt,
+  sharp corners,
+  left=9mm,
+  right=9mm,
+  top=4.2mm,
+  bottom=4.4mm,
+  width=\textwidth
+]
+  \begin{minipage}[c]{0.735\linewidth}
+    {\color{line}\kickerfont\bfseries VIRAAT CHAUHAN \textbullet\ FULL-STACK SOFTWARE PROJECT \textbullet\ LOCAL-FIRST AI TRADING RESEARCH\par}
+    \vspace{1.4mm}
+    {\color{white}\titlefont\bfseries Quant Labs\par}
+    \vspace{1.2mm}
+    {\color{white}\subtitlefont\bfseries
+      A local-first AI trading research system that turns scattered trades,
+      notes, screenshots, scripts, and PDFs into a living memory graph.\par}
+    \vspace{1.2mm}
+    {\color{line}\claimfont
+      The system connects evidence to trades and strategies so traders can ask
+      why decisions worked or failed. \quad Viraat Chauhan \textbullet\ Trading Intelligence OS \textbullet\ Paper-only MVP\par}
+  \end{minipage}
+  \hfill
+  \begin{minipage}[c]{0.225\linewidth}
+    \raggedleft
+    \begin{tcolorbox}[
+      enhanced,
+      colback=white,
+      colframe=white,
+      boxrule=0pt,
+      arc=2.4mm,
+      left=3mm,
+      right=3mm,
+      top=3mm,
+      bottom=3mm,
+      width=95mm
+    ]
+      \centering
+      \includegraphics[height=20mm,keepaspectratio]{logo-ghp.jpeg}
+      \hspace{5mm}
+      \includegraphics[height=20mm,keepaspectratio]{logo-gsu.png}
+    \end{tcolorbox}
+  \end{minipage}
+\end{tcolorbox}
+
+\vspace{2.4mm}
+
+% ---- Main content -----------------------------------------------------------
+\begin{columns}[T,totalwidth=\textwidth]
+
+% ============================ LEFT COLUMN ===================================
+\begin{column}{0.29\textwidth}
+
+  \begin{sectionblock}{Problem}
+    Trading evidence is scattered across executions, screenshots, notes, PDFs,
+    scripts, and journal entries. Current tools track trades, but they rarely
+    explain \textbf{why} a decision worked or failed.
+
+    \vspace{1.5mm}
+    \begin{itemize}
+      \setlength{\itemsep}{1mm}
+      \item Patterns disappear after the trading day.
+      \item Rules live separately from the trades they affected.
+      \item Review questions need evidence, not memory.
+    \end{itemize}
+  \end{sectionblock}
+
+  \begin{sectionblock}{Approach}
+    Quant Labs captures evidence, generates metadata, connects it to trades and
+    strategies, and keeps the result searchable inside a local-first workspace.
+
+    \vspace{2mm}
+    \begin{softblock}
+      {\bodyfont\bfseries\color{primary}Capture \(\rightarrow\) Enrich \(\rightarrow\) Connect \(\rightarrow\) Review\par}
+      \vspace{0.8mm}
+      {\smallbodyfont\color{muted}
+      Links and uploads become structured research records with tags, setup
+      notes, entry rules, exit rules, and risk context.\par}
+    \end{softblock}
+  \end{sectionblock}
+
+  \begin{sectionblock}{Example Review Questions}
+    \questioncard{Why did my VWAP pullback fail after a loss?}
+    \questioncard{Which sources support or contradict this ORB rule?}
+  \end{sectionblock}
+
+  \begin{sectionblock}{Vault Capture}
+    \screenshotbox[width=\linewidth,trim=0 2280 0 0,clip]{app-vault-capture.png}
+    {\captionfont\color{muted}
+    A link or file upload is transformed into auto-filled fields, generated
+    tags, and strategy information for later graph search.\par}
+  \end{sectionblock}
+
+  \begin{sectionblock}{Generated Output}
+    \begin{softblock}
+      {\bodyfont\bfseries\color{primary}Auto-filled fields\par}
+      \vspace{0.8mm}
+      {\smallbodyfont\color{muted}
+      Title, source type, extracted body text, source tags, generated tags,
+      setup notes, entry rules, exit rules, and risk context.\par}
+    \end{softblock}
+
+    \vspace{1.4mm}
+    {\captionfont\bfseries\color{primary}Example generated tags\par}
+    \vspace{1.2mm}
+    \tagpill{accent}{strategy:orb}\hspace{1mm}
+    \tagpill{accent2}{entry:range-break}\hspace{1mm}
+    \tagpill{warning}{risk:predefined-stop}
+
+    \vspace{2.2mm}
+    \begin{softblock}
+      {\bodyfont\bfseries\color{primary}Strategy info created from evidence\par}
+      \vspace{0.8mm}
+      {\smallbodyfont\color{muted}
+      Paper-test stricter opening-range breakout rules with relative-volume,
+      time-of-day, and stop-placement filters before any live automation.\par}
+    \end{softblock}
+  \end{sectionblock}
+
+\end{column}
+
+% =========================== CENTER COLUMN ==================================
+\begin{column}{0.40\textwidth}
+
+  \begin{sectionblock}{Core Memory Graph}
+    \screenshotbox[height=29.45cm,keepaspectratio]{app-obsidian-map.png}
+    {\bodyfont\bfseries\color{primary}
+    The graph is the product's memory layer: trades, routines, sources,
+    strategies, emotions, symbols, and generated tags become connected nodes.\par}
+
+    \vspace{1.2mm}
+    {\captionfont\color{muted}
+    This is the visual proof that Quant Labs is not only a trade log. It turns
+    scattered evidence into relationships a trader can inspect and query.\par}
+  \end{sectionblock}
+
+  \begin{sectionblock}{System Overview}
+    \centering
+    \pipelinecard{1}{Capture Evidence}{Import links, PDFs, screenshots, scripts, trade notes, and journals.}{\(\rightarrow\)}
+    \hfill
+    \pipelinecard{2}{Generate Metadata}{Extract symbols, setups, rules, risks, emotions, entries, exits, and tags.}{\(\rightarrow\)}
+    \hfill
+    \pipelinecard{3}{Build Memory Graph}{Connect trades, strategies, routines, sources, journal entries, and tags.}{\(\rightarrow\)}
+    \hfill
+    \pipelinecard{4}{Ask Why}{Answer review questions using cited evidence instead of isolated trade logs.}{}
+
+    \vspace{1.4mm}
+    \supportcard{Local-first}{Browser data works even when the API is offline.}
+    \hfill
+    \supportcard{Paper-safe}{Generated records can be reviewed before execution.}
+    \hfill
+    \supportcard{Evidence-backed}{Answers cite trades, notes, screenshots, and sources.}
+
+    \vspace{1.4mm}
+    {\smallbodyfont\bfseries\color{primary}Tech Stack\par}
+    \vspace{0.9mm}
+    \techlogoimage{logo-typescript.png}{TypeScript}{app logic}
+    \hfill
+    \techlogoimage{logo-nextjs.png}{Next.js}{workspace}
+    \hfill
+    \techlogoimage{logo-tailwind.png}{Tailwind}{interface}
+    \hfill
+    \techlogoimage{logo-fastapi.png}{FastAPI}{service}
+    \hfill
+    \techlogoimage{logo-postgres.png}{Postgres}{storage}
+    \hfill
+    \techlogoimage{logo-playwright.png}{Playwright}{screenshots}
+  \end{sectionblock}
+
+\end{column}
+
+% ============================ RIGHT COLUMN ==================================
+\begin{column}{0.29\textwidth}
+
+  \begin{sectionblock}{Evidence + Results}
+    \metricbox{0.48\linewidth}{54}{graph nodes}
+    \hfill
+    \metricbox{0.48\linewidth}{68}{graph edges}
+
+    \vspace{1.8mm}
+    \metricbox{0.31\linewidth}{5}{closed trades}
+    \hfill
+    \metricbox{0.31\linewidth}{3}{strategies}
+    \hfill
+    \metricbox{0.31\linewidth}{2}{vault sources}
+
+    \vspace{1.8mm}
+    \screenshotbox[width=\linewidth,trim=0 1040 0 0,clip]{app-trade-log.png}
+    {\captionfont\color{muted}
+    Seeded trades, strategy labels, journal records, and vault sources generate
+    the current graph and strategy scoreboard.\par}
+  \end{sectionblock}
+
+  \begin{sectionblock}{Why It Matters}
+    Quant Labs makes review reproducible. A trader can move from a vague
+    question to the exact trades, notes, and sources that support the answer.
+
+    \vspace{1.4mm}
+    \begin{itemize}
+      \setlength{\itemsep}{1mm}
+      \item TradingView becomes an input, not the whole product.
+      \item The durable asset is the trader's connected memory.
+      \item Explanations stay tied to evidence instead of guesses.
+    \end{itemize}
+  \end{sectionblock}
+
+  \begin{sectionblock}{Paper-Only Safety}
+    The MVP is intentionally bounded: it captures, organizes, and explains
+    evidence before any live automation is allowed.
+
+    \vspace{1.4mm}
+    \begin{softblock}
+      {\bodyfont\bfseries\color{primary}Local-first by default\par}
+      {\smallbodyfont\color{muted}
+      Browser storage keeps the research workspace usable offline. Future
+      broker and market-data adapters remain outside the core memory model.\par}
+    \end{softblock}
+
+    \vspace{1.4mm}
+    \begin{softblock}
+      {\bodyfont\bfseries\color{primary}Research contribution\par}
+      {\smallbodyfont\color{muted}
+      The project reframes a trading journal as a graph-backed research engine
+      for reviewing behavior, testing strategy ideas, and finding repeated
+      decision patterns.\par}
+    \end{softblock}
+  \end{sectionblock}
+
+  \begin{sectionblock}{Strategy Insight Output}
+    \screenshotbox[height=7.8cm,keepaspectratio]{app-trading-insights.png}
+    {\bodyfont\bfseries\color{primary}
+    The insights view turns the same evidence into strategy-level review:
+    what worked, what failed, and which setup deserves more paper testing.\par}
+
+    \vspace{0.8mm}
+    \begin{softblock}
+      {\smallbodyfont\bfseries\color{primary}Signals produced\par}
+      \vspace{0.4mm}
+      \tagpill{accent2}{working setup}\hspace{1mm}
+      \tagpill{warning}{risk cluster}\hspace{1mm}
+      \tagpill{accent}{paper-test next}
+    \end{softblock}
+  \end{sectionblock}
+
+\end{column}
+
+\end{columns}
+
+\vspace{-3.2mm}
+
+% ---- Future work roadmap ----------------------------------------------------
+\begin{tcolorbox}[
+  enhanced,
+  colback=panel,
+  colframe=line,
+  boxrule=0.65pt,
+  arc=2.2mm,
+  left=5mm,
+  right=5mm,
+  top=1.9mm,
+  bottom=2mm,
+  before skip=0mm,
+  after skip=0mm,
+  width=\textwidth
+]
+  \begin{minipage}[t]{0.67\linewidth}
+    \vspace{0pt}
+    {\color{primary}\bodyfont\bfseries Future Work Roadmap\par}
+    \vspace{1mm}
+    \roadstep{1}{Vector Memory}{Embed records.}{\(\rightarrow\)}
+    \hfill
+    \roadstep{2}{GraphRAG Chat}{Cited answers.}{\(\rightarrow\)}
+    \hfill
+    \roadstep{3}{Strategy Compiler}{Source to rules.}{\(\rightarrow\)}
+    \hfill
+    \roadstep{4}{Backtest Lab}{Compare variants.}{\(\rightarrow\)}
+    \hfill
+    \roadstep{5}{Provider Mesh}{Data adapters.}{\(\rightarrow\)}
+    \hfill
+    \roadstep{6}{Safety Layer}{Audit gates.}{}
+  \end{minipage}
+  \hfill
+  \begin{minipage}[t]{0.2\linewidth}
+    \vspace{2.4mm}
+    \begin{tcolorbox}[
+      enhanced,
+      colback=panelsoft,
+      colframe=line,
+      boxrule=0.5pt,
+      arc=1.8mm,
+      left=3mm,
+      right=3mm,
+      top=1.5mm,
+      bottom=1.6mm,
+      height=28.5mm,
+      before skip=0mm,
+      after skip=0mm
+    ]
+      {\color{primary}\bodyfont\bfseries APA Sources\par}
+      \vspace{0.55mm}
+      \apasourceline{Chauhan, V. (2026). \textit{Quant Labs implementation plan}.}
+      \apasourceline{Chauhan, V. (2026). \textit{TradingView adapter thesis}.}
+      \apasourceline{Project repository implementation notes.}
+    \end{tcolorbox}
+  \end{minipage}
+  \hfill
+  \begin{minipage}[t]{0.105\linewidth}
+    \vspace{2.4mm}
+    \begin{tcolorbox}[
+      enhanced,
+      colback=panelsoft,
+      colframe=line,
+      boxrule=0.5pt,
+      arc=1.8mm,
+      left=2.2mm,
+      right=2.2mm,
+      top=1.2mm,
+      bottom=1.2mm,
+      height=28.5mm,
+      before skip=0mm,
+      after skip=0mm
+    ]
+      {\color{primary}\captionfont\bfseries QR Links\par}
+      \vspace{-1.6mm}
+      \qrslot{Demo / Repo}{reserved}
+    \end{tcolorbox}
+  \end{minipage}
+\end{tcolorbox}
+
+\end{frame}
+\end{document}

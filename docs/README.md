@@ -11,6 +11,7 @@ This folder is the project knowledge base. Keep product plans, architecture, set
 - [Architecture](architecture.md) — product thesis, build order, stack, and safety boundaries.
 - [Implementation Plan v2](implementation-plan-v2.md) — original long-form developer plan imported from Downloads.
 - [TradingView Adapter Thesis](tradingview-adapter-thesis.md) — decision note explaining why TradingView is an adapter, not the core platform.
+- [MT5 Access From macOS](mt5-access.md) — why the `MetaTrader5` Python package cannot run here, the four workarounds, and the recommended bridge.
 
 ## Setup And Operations
 

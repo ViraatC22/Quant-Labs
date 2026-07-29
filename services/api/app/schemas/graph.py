@@ -1,5 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -71,3 +72,39 @@ class KgEdgeRead(ApiModel):
     evidence_chunk_ids: list[UUID]
     created_by: str
     created_at: datetime
+
+
+class GraphEvidenceRead(BaseModel):
+    chunk_id: UUID
+    source_document_id: UUID | None = None
+    source_title: str
+    text: str
+
+
+class GraphNeighborhoodNodeRead(BaseModel):
+    id: UUID
+    label: str
+    node_type: str
+    confidence: Decimal | None
+    properties: dict[str, Any] = Field(default_factory=dict)
+    open_conflict_count: int = 0
+
+
+class GraphNeighborhoodEdgeRead(BaseModel):
+    id: UUID
+    edge_type: str
+    from_node_id: UUID
+    to_node_id: UUID
+    confidence: Decimal | None
+    properties: dict[str, Any] = Field(default_factory=dict)
+    evidence_chunk_ids: list[UUID] = Field(default_factory=list)
+    evidence_count: int = 0
+    contributing_sources: list[str] = Field(default_factory=list)
+    evidence: list[GraphEvidenceRead] = Field(default_factory=list)
+
+
+class GraphNeighborhoodRead(BaseModel):
+    root_id: UUID
+    depth: int
+    nodes: list[GraphNeighborhoodNodeRead] = Field(default_factory=list)
+    edges: list[GraphNeighborhoodEdgeRead] = Field(default_factory=list)

@@ -11,6 +11,7 @@ from app.core.security import get_current_user_id
 from app.db.session import get_db
 from app.models.domain import JournalEntry, SourceDocument, Trade
 from app.schemas.trades import (
+    MarketContextRead,
     MarketQuoteRead,
     StrategyEvaluationRead,
     StrategyEvaluationRequest,
@@ -19,7 +20,7 @@ from app.schemas.trades import (
     TradeRecommendationRead,
     TradeUpdate,
 )
-from app.services.market_data import MarketQuote, fetch_market_quote
+from app.services.market_data import MarketQuote, fetch_market_context, fetch_market_quote
 from app.services.strategy_evaluation import (
     StrategyEvaluation,
     build_optimal_strategy,
@@ -74,6 +75,12 @@ def _quote_read(quote: MarketQuote) -> MarketQuoteRead:
         market_time=quote.market_time,
         delayed=quote.delayed,
         stale=quote.stale,
+        bid=quote.bid,
+        ask=quote.ask,
+        spread=quote.spread,
+        price_basis=quote.price_basis,
+        executable=quote.executable,
+        proxy_note=quote.proxy_note,
     )
 
 
@@ -229,6 +236,42 @@ def get_quote(symbol: str) -> MarketQuoteRead:
             detail=f"Could not fetch market quote for {symbol}.",
         ) from exc
     return _quote_read(quote)
+
+
+@router.get("/context/{symbol}", response_model=MarketContextRead)
+def get_market_context(symbol: str) -> MarketContextRead:
+    try:
+        context = fetch_market_context(symbol)
+    except (OSError, TimeoutError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Could not calculate market context for {symbol}.",
+        ) from exc
+    return MarketContextRead(
+        symbol=context.symbol,
+        provider_symbol=context.provider_symbol,
+        provider=context.provider,
+        interval=context.interval,
+        lookback=context.lookback,
+        as_of=context.as_of,
+        delayed=context.delayed,
+        stale=context.stale,
+        sample_size=context.sample_size,
+        last_price=context.last_price,
+        change_percent=context.change_percent,
+        rsi_14=context.rsi_14,
+        atr_percent=context.atr_percent,
+        bollinger_width_percent=context.bollinger_width_percent,
+        volume_percentile=context.volume_percentile,
+        trend_efficiency=context.trend_efficiency,
+        flow=context.flow,
+        bearing=context.bearing,
+        pulse=context.pulse,
+        confidence=context.confidence,
+        limitations=list(context.limitations),
+        price_basis=context.price_basis,
+        proxy_note=context.proxy_note,
+    )
 
 
 @router.get("/recommendations", response_model=list[TradeRecommendationRead])

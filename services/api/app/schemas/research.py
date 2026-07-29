@@ -27,6 +27,9 @@ class ResearchAnswerRead(BaseModel):
     citations: list[CitationRead] = Field(default_factory=list)
     special_elements: list[dict[str, Any]] = Field(default_factory=list)
     retrieved: dict[str, Any] = Field(default_factory=dict)
+    generation_mode: str = "local"
+    writer_provider_id: str | None = None
+    writer_model: str | None = None
 
 
 class ConversationRead(ApiModel):

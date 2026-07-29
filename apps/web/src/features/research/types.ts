@@ -3,7 +3,7 @@
 
 export interface Citation {
   ref: string;
-  kind: "chunk" | "claim";
+  kind: "chunk" | "claim" | "trade";
   source_title: string;
   snippet: string;
 }
@@ -15,12 +15,15 @@ export interface SpecialElement {
 
 export interface ResearchAnswer {
   question: string;
-  route: "connection" | "content" | "hybrid" | "analytics";
+  route: "connection" | "content" | "hybrid" | "analytics" | "trade_review";
   answer_markdown: string;
   trust_score: number;
   citations: Citation[];
   special_elements: SpecialElement[];
   retrieved: Record<string, unknown>;
+  generation_mode: "ai" | "local" | "computed";
+  writer_provider_id: string | null;
+  writer_model: string | null;
 }
 
 export interface SearchResult {

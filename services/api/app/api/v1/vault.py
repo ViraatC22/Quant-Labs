@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.config import settings
 from app.core.security import get_current_user_id
 from app.db.session import get_db
 from app.models.domain import JournalEntry, SourceDocument
@@ -34,6 +35,7 @@ from app.schemas.vault import (
 )
 from app.services.ai_router import (
     active_provider_status,
+    active_research_provider_status,
     extract_strategy_with_ai,
     provider_status,
     router_mode,
@@ -673,7 +675,11 @@ def _is_noise_tag(tag: str) -> bool:
 
 def _clean_tags(tags: set[str] | list[str], *, limit: int = MAX_TAGS) -> list[str]:
     cleaned = sorted(
-        {tag.strip().lower() for tag in tags if tag and tag.strip() and not _is_noise_tag(tag.strip().lower())}
+        {
+            tag.strip().lower()
+            for tag in tags
+            if tag and tag.strip() and not _is_noise_tag(tag.strip().lower())
+        }
     )
     return cleaned[:limit]
 
@@ -1144,9 +1150,12 @@ def _journal_read(entry: JournalEntry) -> JournalEntryRead:
 @router.get("/ai/providers", response_model=AiRouterStatus)
 def ai_provider_status() -> AiRouterStatus:
     active = active_provider_status()
+    research_active = active_research_provider_status()
     return AiRouterStatus(
         mode=router_mode(),
         active_provider_id=active.id if active else None,
+        research_mode=settings.research_writer_mode,
+        research_active_provider_id=research_active.id if research_active else None,
         providers=provider_status(),
     )
 

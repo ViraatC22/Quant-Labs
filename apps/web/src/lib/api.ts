@@ -9,6 +9,7 @@ import type {
   AiRouterStatus,
   GeneratedStrategyInfo,
   JournalEntry,
+  MarketContext,
   MarketQuote,
   SourceDetails,
   StrategyEvaluation,
@@ -301,6 +302,10 @@ export async function deleteTrade(id: string): Promise<void> {
 
 export async function getQuote(symbol: string): Promise<MarketQuote> {
   return request<MarketQuote>(`/api/v1/trades/quotes/${encodeURIComponent(symbol)}`);
+}
+
+export async function getMarketContext(symbol: string): Promise<MarketContext> {
+  return request<MarketContext>(`/api/v1/trades/context/${encodeURIComponent(symbol)}`);
 }
 
 export async function listTradeRecommendations(): Promise<TradeRecommendation[]> {

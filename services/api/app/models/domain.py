@@ -8,6 +8,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Index,
+    Integer,
     Numeric,
     String,
     Text,
@@ -296,6 +297,67 @@ class ResearchConversation(Base):
     answer_markdown: Mapped[str] = mapped_column(Text, nullable=False)
     trust_score: Mapped[Decimal | None] = mapped_column(Numeric(5, 4))
     payload: Mapped[dict] = mapped_column(JSONType, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class BiasSnapshot(Base):
+    """One recorded macro-desk reading for an instrument.
+
+    Exists so the briefing can say "EURUSD bias changed to bearish" and mean
+    it. Without stored prior state, change language is unverifiable — the
+    briefing reports the current reading instead of claiming a transition it
+    cannot substantiate.
+
+    Rows are append-only and cheap; the desk writes one per instrument per
+    refresh only when the reading actually differs from the previous row.
+    """
+
+    __tablename__ = "bias_snapshots"
+
+    id: Mapped[UUID] = mapped_column(GUID(), primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(GUID(), index=True, nullable=False)
+    symbol: Mapped[str] = mapped_column(String(32), index=True, nullable=False)
+    direction: Mapped[str] = mapped_column(String(16), nullable=False)
+    confidence: Mapped[int] = mapped_column(Integer, nullable=False)
+    change_percent: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+    explanation: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # Provenance for the reading: price basis, provider, sample size, proxy note.
+    payload: Mapped[dict] = mapped_column(JSONType, default=dict, nullable=False)
+    recorded_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True, nullable=False
+    )
+    # --- Grading (written exactly once, later) ---------------------------
+    # What subsequently happened to the call: correct | incorrect | flat |
+    # ungradable. NULL until the snapshot ages into the grading window and a
+    # grading pass runs. Never rewritten: a verdict records what was true at
+    # grading time, and calibration must not be built on shifting ground.
+    verdict: Mapped[str | None] = mapped_column(String(16))
+    graded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    price_at_grading: Mapped[Decimal | None] = mapped_column(Numeric(18, 6))
+    move_percent: Mapped[Decimal | None] = mapped_column(Numeric(12, 4))
+
+
+class DeskReport(Base):
+    """One generated pre-market report for one user and one calendar date.
+
+    Composed entirely from data the app already computed — biases, calendar
+    events, strength, and graded prior snapshots — and stored so the archive
+    shows what the desk actually said that morning, not a regeneration.
+    Uniqueness on (user_id, report_date) is enforced in the migration; the
+    generate endpoint is idempotent.
+    """
+
+    __tablename__ = "desk_reports"
+
+    id: Mapped[UUID] = mapped_column(GUID(), primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(GUID(), index=True, nullable=False)
+    report_date: Mapped[date] = mapped_column(Date, index=True, nullable=False)
+    title: Mapped[str] = mapped_column(String(300), nullable=False)
+    # Sections: graded calls, per-instrument outlooks, events, strength, caveats.
+    payload: Mapped[dict] = mapped_column(JSONType, default=dict, nullable=False)
+    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

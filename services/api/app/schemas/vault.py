@@ -69,11 +69,14 @@ class AiProviderStatus(BaseModel):
     model: str
     priority: int
     protocol: str
+    cooldown_remaining_seconds: int = 0
 
 
 class AiRouterStatus(BaseModel):
     mode: str
     active_provider_id: str | None = None
+    research_mode: str = "local"
+    research_active_provider_id: str | None = None
     providers: list[AiProviderStatus] = Field(default_factory=list)
 
 

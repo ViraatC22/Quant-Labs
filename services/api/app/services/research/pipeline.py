@@ -29,6 +29,9 @@ class ResearchAnswer:
     citations: list[dict[str, Any]] = field(default_factory=list)
     special_elements: list[dict[str, Any]] = field(default_factory=list)
     retrieved: dict[str, Any] = field(default_factory=dict)
+    generation_mode: str = "local"
+    writer_provider_id: str | None = None
+    writer_model: str | None = None
 
 
 def answer_question(db: Session, *, user_id: UUID, question: str) -> ResearchAnswer:
@@ -37,10 +40,21 @@ def answer_question(db: Session, *, user_id: UUID, question: str) -> ResearchAns
         return _answer_analytics(db, user_id=user_id, question=question)
 
     run_graph = route in ("connection", "hybrid")
-    run_text = route in ("content", "hybrid")
+    run_text = route in ("content", "hybrid", "trade_review")
 
-    chunks = retrieval.search_chunks(db, user_id=user_id, query=question) if run_text else []
-    claims = retrieval.search_claims(db, user_id=user_id, query=question)
+    trades = (
+        retrieval.search_trades(db, user_id=user_id, query=question)
+        if route == "trade_review"
+        else []
+    )
+    retrieval_query = _trade_expanded_query(question, trades) if trades else question
+
+    chunks = (
+        retrieval.search_chunks(db, user_id=user_id, query=retrieval_query)
+        if run_text
+        else []
+    )
+    claims = retrieval.search_claims(db, user_id=user_id, query=retrieval_query)
 
     graph = retrieval.RetrievedGraph()
     if run_graph:
@@ -53,7 +67,11 @@ def answer_question(db: Session, *, user_id: UUID, question: str) -> ResearchAns
     conflicts = _surface_conflicts(db, user_id=user_id, claims=claims)
 
     result = writer.compose(
-        question=question, chunks=chunks, claims=claims, conflicts=conflicts
+        question=question,
+        chunks=chunks,
+        claims=claims,
+        trades=trades,
+        conflicts=conflicts,
     )
 
     return ResearchAnswer(
@@ -63,7 +81,11 @@ def answer_question(db: Session, *, user_id: UUID, question: str) -> ResearchAns
         trust_score=result.trust_score,
         citations=[asdict(c) for c in result.citations],
         special_elements=result.special_elements,
+        generation_mode=result.generation_mode,
+        writer_provider_id=result.writer_provider_id,
+        writer_model=result.writer_model,
         retrieved={
+            "trades": [_serialize_trade(trade) for trade in trades],
             "chunks": [
                 asdict(c) | {"chunk_id": str(c.chunk_id), "source_id": str(c.source_id)}
                 for c in chunks
@@ -84,6 +106,25 @@ def answer_question(db: Session, *, user_id: UUID, question: str) -> ResearchAns
             ],
         },
     )
+
+
+def _trade_expanded_query(
+    question: str, trades: list[retrieval.RetrievedTrade]
+) -> str:
+    """Use the matched trade's own labels to find its relevant playbook."""
+    if not trades:
+        return question
+    trade = trades[0]
+    context = [trade.symbol, trade.strategy, trade.setup, trade.journal_summary]
+    return " ".join([question, *(value for value in context if value)])
+
+
+def _serialize_trade(trade: retrieval.RetrievedTrade) -> dict[str, Any]:
+    payload = asdict(trade)
+    payload["trade_id"] = str(trade.trade_id)
+    payload["entry_time"] = trade.entry_time.isoformat()
+    payload["exit_time"] = trade.exit_time.isoformat() if trade.exit_time else None
+    return payload
 
 
 def _surface_conflicts(
@@ -129,6 +170,7 @@ def _answer_analytics(db: Session, *, user_id: UUID, question: str) -> ResearchA
                 "performance stats to compute."
             ),
             trust_score=1.0,
+            generation_mode="computed",
         )
     wins = [t for t in trades if (t.pnl_amount or Decimal(0)) > 0]
     total_pnl = sum((t.pnl_amount or Decimal(0)) for t in trades)
@@ -162,4 +204,5 @@ def _answer_analytics(db: Session, *, user_id: UUID, question: str) -> ResearchA
         trust_score=1.0,
         special_elements=[stat_row],
         retrieved={"trades_counted": n},
+        generation_mode="computed",
     )

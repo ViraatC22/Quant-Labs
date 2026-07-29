@@ -65,11 +65,14 @@ export type AiProviderStatus = {
   model: string;
   priority: number;
   protocol: string;
+  cooldown_remaining_seconds: number;
 };
 
 export type AiRouterStatus = {
   mode: "auto" | "local" | "off" | string;
   active_provider_id?: string | null;
+  research_mode?: string;
+  research_active_provider_id?: string | null;
   providers: AiProviderStatus[];
 };
 
@@ -184,6 +187,41 @@ export type MarketQuote = {
   market_time?: string | null;
   delayed: boolean;
   stale?: boolean;
+  // Bid/ask are null whenever the upstream feed publishes no real book. They
+  // are never synthesized from last_price.
+  bid?: string | null;
+  ask?: string | null;
+  spread?: string | null;
+  /** top_of_book | last_trade | indicative_mid — see market_data.PRICE_BASIS_*. */
+  price_basis: string;
+  /** True only when this price is safe to size a live order against. */
+  executable?: boolean;
+  /** Set when the provider served a different instrument than requested. */
+  proxy_note?: string | null;
+};
+
+export type MarketContext = {
+  symbol: string;
+  provider_symbol: string;
+  provider: string;
+  interval: string;
+  lookback: string;
+  as_of: string;
+  delayed: boolean;
+  stale: boolean;
+  sample_size: number;
+  last_price: number;
+  change_percent: number;
+  rsi_14?: number | null;
+  atr_percent?: number | null;
+  bollinger_width_percent?: number | null;
+  volume_percentile?: number | null;
+  trend_efficiency?: number | null;
+  flow: "thin" | "healthy" | "crowded" | "unavailable" | string;
+  bearing: string;
+  pulse: "quiet" | "tradable" | "wild" | "unavailable" | string;
+  confidence: number;
+  limitations: string[];
 };
 
 export type StrategyEvaluation = {

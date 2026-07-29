@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
+import { searchGraphNodes } from "@/features/graph/api";
 import type { WorkspaceState } from "@/lib/types";
 
 type Tab = { key: string; label: string };
@@ -12,12 +13,14 @@ type Result = {
   title: string;
   subtitle: string;
   tab: string;
+  graphNodeId?: string;
 };
 
 type CommandPaletteProps = {
   state: WorkspaceState;
   tabs: Tab[];
   onSelectTab: (tab: string) => void;
+  onFocusGraphNode?: (nodeId: string) => void;
   onClose: () => void;
 };
 
@@ -62,16 +65,69 @@ function buildResults(state: WorkspaceState, tabs: Tab[], query: string): Result
 // Rendered only while open (mounted fresh each time), so there is no internal
 // open state or reset effects to manage. The ⌘K/Escape shortcut lives in the
 // parent, which controls mounting.
-export function CommandPalette({ state, tabs, onSelectTab, onClose }: CommandPaletteProps) {
+export function CommandPalette({
+  state,
+  tabs,
+  onSelectTab,
+  onFocusGraphNode,
+  onClose
+}: CommandPaletteProps) {
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
+  const [graphResultState, setGraphResultState] = useState<{
+    query: string;
+    results: Result[];
+  }>({ query: "", results: [] });
 
-  const results = useMemo(() => buildResults(state, tabs, query), [state, tabs, query]);
+  useEffect(() => {
+    const value = query.trim();
+    if (value.length < 2) return;
+    const controller = new AbortController();
+    const timer = window.setTimeout(() => {
+      void searchGraphNodes(value, 8, controller.signal)
+        .then((nodes) => {
+          setGraphResultState({
+            query: value,
+            results: nodes.map((node) => ({
+              id: `graph:${node.id}`,
+              group: "Atlas entity",
+              title: node.label,
+              subtitle: node.node_type,
+              tab: "graph",
+              graphNodeId: node.id
+            }))
+          });
+        })
+        .catch(() => {
+          if (!controller.signal.aborted) {
+            setGraphResultState({ query: value, results: [] });
+          }
+        });
+    }, 180);
+    return () => {
+      window.clearTimeout(timer);
+      controller.abort();
+    };
+  }, [query]);
+
+  const results = useMemo(
+    () => [
+      ...buildResults(state, tabs, query),
+      ...(query.trim().length >= 2 && graphResultState.query === query.trim()
+        ? graphResultState.results
+        : [])
+    ].slice(0, 40),
+    [graphResultState, query, state, tabs]
+  );
   const clampedActive = Math.min(active, Math.max(0, results.length - 1));
 
   function choose(result: Result | undefined) {
     if (!result) return;
-    onSelectTab(result.tab);
+    if (result.graphNodeId && onFocusGraphNode) {
+      onFocusGraphNode(result.graphNodeId);
+    } else {
+      onSelectTab(result.tab);
+    }
     onClose();
   }
 
@@ -90,7 +146,7 @@ export function CommandPalette({ state, tabs, onSelectTab, onClose }: CommandPal
         <input
           autoFocus
           className="w-full border-b border-line bg-transparent px-4 py-3 text-sm text-ink outline-none placeholder:text-ink/40"
-          placeholder="Search sources, trades, journal, or jump to a tab…"
+          placeholder="Search sources, trades, journal, Atlas entities, or tabs…"
           value={query}
           onChange={(event) => {
             setQuery(event.target.value);

@@ -9,6 +9,7 @@ _tmp = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
 _tmp.close()
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{_tmp.name}")
 os.environ["AI_ENRICHMENT_MODE"] = "local"
+os.environ["RESEARCH_WRITER_MODE"] = "local"
 
 
 @pytest.fixture(autouse=True)

@@ -10,8 +10,8 @@
 ## Implementation status (2026-07-10)
 
 A first vertical slice of the core is **implemented, tested, and verified end to
-end** (67 API tests green, ruff + pyright clean, web typecheck/lint clean, UI
-driven in a browser). Shipped in this pass:
+end** (69 API tests green; ruff + pyright clean; 23 web tests plus typecheck/lint
+clean; UI driven in a browser). Shipped in this pass:
 
 - **L-1 (partial):** boundary-aware overlapping chunking + real token counts
   (`app/services/chunking.py`); provider-abstracted embeddings, local default
@@ -27,16 +27,18 @@ driven in a browser). Shipped in this pass:
   `research_conversations` tables + migration `20260710_0003`.
 - **L-3 (core):** router → hybrid retriever → grounded writer with trust score
   (`app/services/research/`), `POST /research/ask`, `GET /research/search`,
-  conversation history, and the `/research` web page (`features/research/`).
+  conversation history, and the workspace's Research tab (`features/research/`).
 - **L-4 (core):** conflict detection between opposing sources;
   `GET /research/conflicts`, `PATCH /research/conflicts/{id}`, claim timeline.
-- **L-5 (API):** `GET /graph/neighborhood/{id}` and `GET /graph/search`. *Not
-  yet:* the Atlas UI wiring.
+- **L-5:** lazy 1–3-hop Atlas expansion, learned-entity search, edge evidence
+  inspector with Vault click-through, conflict badges, evidence-density edge
+  coloring, and ⌘K search-to-focus (`features/graph/`); typed provenance from
+  `GET /graph/neighborhood/{id}` plus paginated/scoped graph lists.
 - **L-6:** read-only MCP server (`services/mcp`) with five tools.
 
 **Deferred (planned, not built here):** the async job system with heartbeats
-(L-1.1), LLM entity/claim extractor (L-2.1), feed monitoring (L-4.3), Atlas
-explorer UI (L-5 frontend), `GraphStore` protocol extraction (L-7), special
+(L-1.1), LLM entity/claim extractor (L-2.1), feed monitoring (L-4.3),
+`GraphStore` protocol extraction (L-7), special
 answer-element renderers (L-8), and workspaces / multi-agent mode (L-9). The
 phase docs below remain the roadmap for those.
 
@@ -238,6 +240,10 @@ Lattice's answer path (L5, L6, L7), pointed at trading memory. This becomes the 
    *AC:* importing two fixture docs with opposing statements about the same setup produces exactly one open conflict, visible in UI and mentioned by the writer when asked about that setup.
 
 ### Phase L-5 — Interactive graph explorer upgrade (L9) — ≈ 1.5 weeks ∥
+
+**Implemented 2026-07-10.** The Atlas keeps its local/offline galaxy and lazily
+merges learned server neighborhoods into it. All five items below ship, with
+API/model tests and browser verification over real stored evidence.
 
 The Strategy Atlas galaxy stays as ambience; add Lattice-style investigation:
 

@@ -184,8 +184,12 @@ def test_ai_provider_status_defaults_to_local_mode() -> None:
     assert payload["mode"] == "local"
     assert payload["active_provider_id"] is None
     assert [provider["id"] for provider in payload["providers"]] == [
-        "openrouter",
-        "groq",
         "gemini",
+        "groq",
+        "openrouter",
         "cerebras",
+        "ollama",
+        "openai",
     ]
+    assert payload["research_mode"] == "local"
+    assert payload["research_active_provider_id"] is None
