@@ -1,7 +1,9 @@
 # Quant Labs Project Audit
 
-**Audit date:** 2026-07-29  
-**Audited branch:** `automation/quant-labs-recovery`  
+**Audit date:** 2026-07-29
+
+**Audited branch:** `automation/quant-labs-recovery`
+
 **Preserved pre-automation commit:** `2b23575cc385efbf7812592d34da8e06faee8923`
 
 ## 1. Project purpose
@@ -189,4 +191,3 @@ The current coherent scope is complete when:
 - `CS_Beekman_Chauhan.pdf`, `deepfake-poster/`, and `images/` are treated as
   unrelated local academic artifacts based on the existing v3 audit and their
   content/location. They will be preserved on disk and ignored, not deleted.
-

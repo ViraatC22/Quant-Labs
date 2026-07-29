@@ -1,6 +1,7 @@
 # Quant Labs Completion Plan
 
-**Recovery branch:** `automation/quant-labs-recovery`  
+**Recovery branch:** `automation/quant-labs-recovery`
+
 **Plan date:** 2026-07-29
 
 Statuses: `NOT_STARTED`, `IN_PROGRESS`, `COMPLETED`, `BLOCKED`,
@@ -30,8 +31,8 @@ Statuses: `NOT_STARTED`, `IN_PROGRESS`, `COMPLETED`, `BLOCKED`,
 - **Acceptance criteria:** Audit is evidence-based and identifies verified,
   deferred, externally dependent, and security-limited scope.
 - **Verification:** Manual review; `git diff --check`.
-- **Status:** `IN_PROGRESS`
-- **Commit:** Pending.
+- **Status:** `COMPLETED`
+- **Commit:** `16ec02c`
 
 ## Milestone 1 — Reproducible quality gate and hygiene
 
@@ -41,11 +42,12 @@ Statuses: `NOT_STARTED`, `IN_PROGRESS`, `COMPLETED`, `BLOCKED`,
   which makes local and automation results easy to diverge.
 - **Files/modules:** `scripts/verify.sh`, `README.md`, root `package.json`.
 - **Dependencies:** Existing API virtual environment and web dependencies.
-- **Acceptance criteria:** One command runs API Ruff/Pyright/Pytest, web
-  ESLint/TypeScript/Vitest/build, and Compose configuration validation; any
-  failing check returns nonzero.
+- **Acceptance criteria:** One command runs API Ruff/Pyright/Pytest and web
+  ESLint/TypeScript/Vitest/build. It also runs Compose configuration validation
+  when Docker is installed and reports an explicit limitation otherwise. Any
+  executed failing check returns nonzero.
 - **Verification:** `npm run verify`.
-- **Status:** `NOT_STARTED`
+- **Status:** `IN_PROGRESS`
 - **Commit:** Pending.
 
 ### QL-102 — Keep unrelated artifacts out of repository state
@@ -57,7 +59,7 @@ Statuses: `NOT_STARTED`, `IN_PROGRESS`, `COMPLETED`, `BLOCKED`,
 - **Acceptance criteria:** Files remain on disk, are ignored, and no broad rule
   hides legitimate product assets.
 - **Verification:** `test -e` for all three paths; `git status --short`.
-- **Status:** `NOT_STARTED`
+- **Status:** `IN_PROGRESS`
 - **Commit:** Pending.
 
 ## Milestone 2 — Final verification and handoff
@@ -119,4 +121,3 @@ Statuses: `NOT_STARTED`, `IN_PROGRESS`, `COMPLETED`, `BLOCKED`,
 - **Reason:** The worker is documented as a placeholder and no shipped flow
   depends on it. Implement it when ingestion/backtest latency creates a measured
   queued-work requirement.
-

@@ -203,6 +203,21 @@ autonomous trading is intentionally out of scope.
 
 ## Development
 
+Install the API development dependencies into `services/api/.venv` and the web
+dependencies with `npm ci --prefix apps/web`, then run the canonical local
+quality gate from the repository root:
+
+```bash
+npm run verify
+```
+
+This runs API lint, type checking, and tests; web lint, type checking, tests,
+and a production build; and validates the Compose file when Docker is
+available. A missing Docker CLI is reported as an explicit local limitation;
+CI independently exercises the PostgreSQL migration and drift path.
+
+The individual commands remain:
+
 ```bash
 # API (from services/api): lint, type-check, test
 ruff check app tests && pyright app && pytest

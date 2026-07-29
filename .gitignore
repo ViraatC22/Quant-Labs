@@ -31,3 +31,10 @@ local_data/
 # Scratch / non-product artifacts kept out of the product repo.
 /tmp/
 uv.lock
+
+# Preserved local academic artifacts that are unrelated to Quant Labs.
+# These stay on disk; the narrow rules prevent them from polluting product Git
+# state without hiding the product poster under docs/poster/.
+/CS_Beekman_Chauhan.pdf
+/deepfake-poster/
+/images/

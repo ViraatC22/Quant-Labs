@@ -3,6 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "docker compose up --build",
+    "verify": "bash scripts/verify.sh",
     "web:dev": "npm --prefix apps/web run dev",
     "web:lint": "npm --prefix apps/web run lint",
     "web:typecheck": "npm --prefix apps/web run typecheck",
